@@ -114,8 +114,9 @@ class DirectoryStructureConfig(BaseModel):
     """Pydantic model for directory and file path configurations."""
 
     run_dir_regex: str = r"^\d{8}_\d{6}_run_.*"
-    logs_dir: str = constants.LOGS_DIR_NAME
+    data_dir: str = constants.DATA_DIR_NAME
     graphics_dir: str = constants.GRAPHICS_DIR_NAME
+    logs_dir: str = constants.LOGS_DIR_NAME
     reports_dir: str = constants.REPORTS_DIR_NAME
 
 
@@ -267,7 +268,7 @@ class AgnosticReportGenerator:
         """
         Gathers all logs, JSON, and plot files from a specific run directory.
 
-        This method scans the 'logs' and 'graphics' subdirectories of a given
+        This method scans the 'data', 'logs', and 'graphics' subdirectories of a given
         run folder to collect all necessary files for the LLM prompt. It
         selectively excludes verbose JSON files to manage token count.
 
@@ -283,9 +284,11 @@ class AgnosticReportGenerator:
             "logs": "",
             "plot_type": self.config.reporting.plot_type,
         }
-        logs_subdir = os.path.join(run_dir, self.config.directory_structure.logs_dir)
-        if os.path.isdir(logs_subdir):
-            for json_file in sorted(glob.glob(os.path.join(logs_subdir, "*.json"))):
+
+        # --- Gather JSON Artifacts ---
+        json_subdir = os.path.join(run_dir, self.config.directory_structure.data_dir)
+        if os.path.isdir(json_subdir):
+            for json_file in sorted(glob.glob(os.path.join(json_subdir, "*.json"))):
                 # Exclude verbose composition summaries to reduce token count for the LLM.
                 # The LLM can infer composition from the other, more concise JSON files.
                 if "cluster_composition_summary" in os.path.basename(json_file):
@@ -303,6 +306,8 @@ class AgnosticReportGenerator:
                 except Exception as e:
                     logger.warning(f"Could not read JSON file {filename}: {e}")
                     artifacts["json_data"][filename] = f"Error reading file: {e}"
+
+        # --- Gather Plot Artifacts ---
         graphics_subdir = os.path.join(
             run_dir, self.config.directory_structure.graphics_dir
         )
@@ -313,6 +318,9 @@ class AgnosticReportGenerator:
             artifacts["plots"] = sorted(
                 glob.glob(os.path.join(graphics_subdir, f"*.{plot_extension}"))
             )
+
+        # --- Gather Log Files ---
+        logs_subdir = os.path.join(run_dir, self.config.directory_structure.logs_dir)
         log_files = glob.glob(os.path.join(logs_subdir, "*.log"))
         if log_files:
             try:
@@ -321,6 +329,7 @@ class AgnosticReportGenerator:
             except Exception as e:
                 logger.warning(f"Could not read log file {log_files[0]}: {e}")
                 artifacts["logs"] = f"Could not read log file {log_files[0]}: {e}"
+
         return artifacts
 
     def _get_llm_instance(self) -> Runnable:

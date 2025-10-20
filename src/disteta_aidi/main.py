@@ -1035,7 +1035,7 @@ class DistetaAIDI:
             self.logger.info(f"No data to save for {filename}. Skipping.")
             return
 
-        filepath = os.path.join(self.logs_output_path, filename)
+        filepath = os.path.join(self.data_output_path, filename)
 
         try:
             with open(filepath, "w", encoding="utf-8") as f:
