@@ -1,0 +1,163 @@
+# =============================================================================
+# ==         Main Configuration for the DistETA-AIDI Analysis Script         ==
+# =============================================================================
+#
+# HOW TO RUN AN ANALYSIS:
+# 1. Go to the "ACTIVE CONFIGURATION" section below.
+# 2. Add the name of the analysis blueprint you want to run (e.g., "truck_data_config").
+#
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 1. DEFAULT SETTINGS (&common_settings)
+#    - This block defines the default parameters for all analysis blueprints.
+#    - It is referenced by `<<: *common_settings` in the blueprints below.
+# -----------------------------------------------------------------------------
+common_settings: &common_settings # --- Preprocessing & Data Cleaning ---
+  preprocessing:
+    # Defines the method to filter out rare combinations of categorical features.
+    # This helps reduce noise in the analysis.
+    #
+    # OPTIONS:
+    #   - "auto-knee": (Default) Automatically finds the "elbow" in the data distribution.
+    #   - "auto-knee(S=X)": Fine-tune sensitivity. S=0.1 is less aggressive, S=2.0 is more aggressive.
+    #   - "pXX": Use a percentile. "p25" keeps the top 75% of combinations by size.
+    #   - Integer: A hardcoded minimum size (e.g., 15).
+    min_combination_size_input: "auto-knee"
+
+    # Defines how to discretize (bin) the continuous variable.
+    #
+    # OPTIONS:
+    #   - "auto": (Default) Uses the Freedman-Diaconis rule for optimal binning.
+    #   - Integer: Manually set a fixed number of bins (e.g., 100).
+    quantization_n_classes_input: "auto"
+
+    # Controls the search for the optimal number of clusters (K).
+    # The search stops if the silhouette score drops by more than this percentage
+    # when trying a higher K. A smaller value (e.g., 1.5) is more selective.
+    silhouette_score_drop_percentage_input: 5
+
+  # --- Clustering Parameters ---
+  clustering:
+    # The search range for K (number of clusters). The script will test every
+    # integer value from min to max to find the best K.
+    cluster_range_min: 3
+    cluster_range_max: 8
+
+  # --- High-Density Region (HDR) Analysis ---
+  hdr_analysis:
+    # Defines the size of the High-Density Region. A value of 50 means the HDR
+    # will represent the most concentrated 50% of the data points in a cluster.
+    hdr_threshold_percentage: 75
+
+  # --- Plotting Defaults ---
+  # Default axis labels for plots. Can be overridden in each analysis blueprint.
+  plotting: &common_plotting
+    x_axis_label: "Value"
+    quantized_axis_label: "Bin"
+
+# -----------------------------------------------------------------------------
+# 2. ACTIVE CONFIGURATION
+#    - Add the names of the analysis blueprints (defined below) to this list.
+#    - The script will run them in the order they appear.
+# -----------------------------------------------------------------------------
+active_config_names:
+  # - "port_sines_config"  # Example: This analysis is currently disabled
+  - "truck_data_config" # Example: This analysis is currently enabled
+
+# =============================================================================
+# ==                          ANALYSIS BLUEPRINTS                          ==
+# =============================================================================
+#
+# Each block below is a complete setup for a specific analysis.
+# You can duplicate, rename, and modify these blocks to create new analyses.
+#
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+#  BLUEPRINT 1: Truck Drayage Data Analysis
+# -----------------------------------------------------------------------------
+truck_data_config:
+  # This inherits all default settings from "&common_settings" defined above.
+  <<: *common_settings
+
+  # --- I/O and Column Definitions ---
+  io:
+    input_data_path: "data/truck_arrival_data.csv"
+  columns:
+    grouping_column: "route"
+    categorical: ["weekday", "weight_class", "start_time"]
+    continuous_to_analyze: ["total_time"]
+    continuous_units:
+      total_time: "Hours"
+
+  # --- Data Filtering (Optional) ---
+  # Use this to run the analysis on a subset of the data.
+  # For example, to analyze only the "Sines - Porto" and "Sines - Lisboa" routes:
+  # filter_group_value: ["sin_por", "sin_lis"], []
+  filtering:
+    filter_group_value: ["sin_por", "sin_lis"]
+
+  # --- Preprocessing Overrides (Optional) ---
+  # This section overrides the default preprocessing settings from above.
+  preprocessing:
+    # The default 'auto-knee' is too aggressive for this dataset.
+    # 'p25' provides more predictable filtering by keeping the top 75% of combinations.
+    min_combination_size_input: "p15"
+    # These settings are inherited from &common_settings, but are shown here for clarity.
+    quantization_n_classes_input: "auto"
+    silhouette_score_drop_percentage_input: 5
+
+  # --- Mappings for Readable Outputs ---
+  mapping:
+    column_value:
+      route:
+        sin_lis: "Sines - Lisboa"
+        sin_por: "Sines - Porto"
+        sin_ent: "Sines - Entroncamento"
+        sin_bad: "Sines - Badajoz"
+    column_name:
+      total_time: "Total Travel Time"
+
+  # --- Plotting Overrides ---
+  plotting:
+    <<: *common_plotting # Inherits default plotting labels
+    x_axis_label: "Travel Time (Hours)"
+    quantized_axis_label: "Time Bin"
+
+# -----------------------------------------------------------------------------
+#  BLUEPRINT 2: Port of Sines Dwell Time Analysis
+# -----------------------------------------------------------------------------
+port_sines_config:
+  # This inherits all default settings from "&common_settings" defined above.
+  <<: *common_settings
+
+  # --- I/O and Column Definitions ---
+  io:
+    input_data_path: "data/df_XXI.parquet"
+  columns:
+    grouping_column: null # Set to null when there's no primary grouping
+    categorical:
+      - "weight_class"
+      - "iso_type"
+      - "weekday_inbound"
+      - "weekday_outbound"
+    continuous_to_analyze: ["delta_hours"]
+    continuous_units:
+      delta_hours: "Hours"
+
+  # --- Data Filtering (Optional) ---
+  filtering:
+    filter_group_value: [] # No filters applied
+
+  # --- Mappings for Readable Outputs ---
+  mapping:
+    column_value: {}
+    column_name:
+      delta_hours: "Dwell Time"
+
+  # --- Plotting Overrides ---
+  plotting:
+    <<: *common_plotting # Inherits default plotting labels
+    x_axis_label: "Dwell Time (Hours)"
+    quantized_axis_label: "Time Bin"

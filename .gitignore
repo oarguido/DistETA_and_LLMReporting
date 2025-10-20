@@ -1,0 +1,38 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+
+# IDE / Editor specific
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Environment
+.env
+.env.*
+venv/
+env/
+.venv/
+
+# Output files
+output/
+# If you want to keep the output folder but ignore its contents:
+# output/*
+# !output/.gitkeep
+
+# Archive
+00. archive/
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Data files
+data/df_XXI.parquet
+
+# Jupyter Notebook
+.ipynb_checkpoints

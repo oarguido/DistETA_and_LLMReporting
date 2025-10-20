@@ -1,0 +1,31 @@
+# requirements.in
+
+# Core data analysis and machine learning
+pandas
+numpy
+scikit-learn
+kneed
+
+# Configuration and I/O
+pyyaml
+openpyxl # For reading .xlsx/.xls files with pandas
+pyarrow  # For reading .parquet files with pandas
+
+# Visualization and image export
+plotly
+kaleido==0.2.1
+
+# Web server and reporting
+fastapi
+uvicorn[standard] # [standard] includes helpful websocket/protocol libraries
+markdown
+Pillow     # For image processing with Gemini
+
+# LLM Providers
+google-genai
+ollama
+
+# LangChain for LLM orchestration
+langchain
+langchain-google-genai
+langchain-community

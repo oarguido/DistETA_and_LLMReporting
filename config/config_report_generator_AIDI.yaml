@@ -1,0 +1,130 @@
+# =============================================================================
+# ==        Configuration for the Agnostic LLM Report Generator            ==
+# =============================================================================
+#
+# HOW TO USE THIS FILE:
+# 1. Choose your LLM provider (Gemini or Ollama) in the "LLM Configuration".
+# 2. Select the specific model you want to use.
+# 3. Customize the report's appearance in the "Report & Visuals" section.
+#
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 1. LLM Configuration
+#    - This section controls which Large Language Model generates the report.
+# -----------------------------------------------------------------------------
+llm:
+  # --- Provider Selection ---
+  # Choose your provider here. This determines which settings block below is used.
+  # OPTIONS: "gemini" (cloud-based) or "ollama" (local)
+  provider: "gemini"
+
+  # --- Gemini Settings (used if provider is "gemini") ---
+  gemini_settings:
+    # Specify the exact Gemini model name.
+    # Examples: "gemini-flash-lite-latest", "gemini-pro-latest", "gemini-flash-latest"
+    model_name: "gemini-flash-lite-latest"
+
+  # --- Ollama Settings (used if provider is "ollama") ---
+  ollama_settings:
+    # Specify the exact Ollama model name.
+    # The model must be pulled and available in your local Ollama instance.
+    #
+    # - For text-only models (best for interactive plots):
+    #   Examples: "llama3", "phi3", "mistral"
+    # - For multimodal models (required for static PNG plots):
+    #   Examples: "llava", "moondream"
+    model_name: "llava:latest"
+
+# -----------------------------------------------------------------------------
+# 2. Report & Visuals Configuration
+#    - Controls the appearance and content of the final report.
+# -----------------------------------------------------------------------------
+reporting:
+  # --- Plot Type ---
+  # Defines how plots are embedded in the report.
+  #
+  # OPTIONS:
+  #  - "interactive": (Recommended) Embeds interactive HTML plots using <iframe_tags>.
+  #                   Works with any text-based LLM.
+  #  - "static":      Embeds static PNG images. Requires a multimodal LLM
+  #                   (like Gemini, Llava, or Moondream) that can "see" images.
+  plot_type: "interactive"
+
+  # --- Visual Style ---
+  visuals:
+    # Defines the maximum width of the report's content area in pixels.
+    # This value is also used to set the width of generated plot images.
+    report_width_px: 1100
+
+# =============================================================================
+# ==                      ADVANCED: LLM Prompt Template                      ==
+# =============================================================================
+#
+# This template is the "brain" of the report generator. It is a detailed set
+# of instructions sent to the LLM.
+#
+# - The text below is the instruction for the AI.
+# - Placeholders like {run_directory_name}, {all_json_data_str}, and
+#   {plot_files_summary} are automatically filled with data from the analysis
+#   run before the prompt is sent to the LLM.
+#
+# =============================================================================
+llm_prompt_template: |
+  You are an expert data analyst. Your task is to write a polished, comprehensive analysis report.
+  Your goal is to synthesize all provided information into a single, flowing narrative. **Do not create separate sections for "JSON Interpretation" and "Plot Interpretation."** Instead, use the plots and JSON data as evidence to support your analysis within each topical section. The final output must be a single Markdown file.
+
+  You have been provided with the following information from an analysis run:
+  1.  Run Directory Name: `{run_directory_name}`
+  2.  JSON Data Outputs: A collection of JSON files containing run parameters, metrics, and results.
+  3.  Plot Files Summary: A list of all plot files (PNG or HTML) found in the 'graphics' subfolder.
+
+  **Structure your report following this narrative flow:**
+
+  **1. Introduction:**
+  -   Start with a high-level summary of the analysis. What was the goal?
+  -   Use the `run_summary.json` data to briefly describe the dataset and the main variable being analyzed.
+
+  **2. Overall Data Distribution:**
+  -   Begin by describing the initial distribution of the continuous variable for each group.
+  -   **Embed and reference the `continuous_histograms.png` plot here.**
+  -   Discuss what the shape of the histograms (e.g., skewness, peaks) suggests about the data before any clustering is performed.
+
+  **3. Determining the Optimal Number of Clusters (K):**
+  -   Explain how the optimal number of clusters was chosen for each analysis segment (e.g., for each route).
+  -   Use the data from `k_selection_summary.json` to explain the decision. Discuss the WCSS (Elbow Method) and Silhouette scores from the `silhouette_scores_by_segment` key, and the final choice from the `optimal_k_values` key.
+  -   For each segment, **find the plot from the 'Available image files' list that corresponds to the optimal K value and embed it here.** For example, if `k_selection_summary.json` says the optimal K for `sin_lis_total_time` is 4, you should find and embed the `silhouette_elbow_sin_lis_total_time_K4.png` plot.
+
+  **4. In-Depth Cluster Profile Analysis:**
+  -   This is the most important section. For each analysis segment (e.g., each route):
+      a. **Embed and reference the main `cluster_distributions_....png` plot.**
+      b. For each cluster shown in that plot (e.g., Cluster 0, Cluster 1, etc.), provide a detailed profile.
+      c. **Synthesize information for each cluster from `final_cluster_profiles.json`.** This file now contains the main distribution (`bin_profiles`) and the High-Density Region (`hdr_profile`) for each cluster. Discuss:
+         - The size of the cluster (number of items).
+         - The shape of its distribution (e.g., "sharply peaked, indicating low variability" or "wide and flat, indicating high variability").
+         - The High-Density Region (HDR) that represents its most common outcome.
+
+  **5. Key Findings and Hypotheses:**
+  -   Summarize the main patterns and insights discovered.
+  -   Compare and contrast the clusters. What makes them different?
+  -   **Propose real-world hypotheses for why these different clusters exist.** (e.g., "Cluster 1's efficiency might be due to night-time driving, while Cluster 2's variability could be caused by peak-hour traffic.")
+
+  **6. Conclusion and Potential Next Steps:**
+  -   Provide a final summary of the analysis and its implications.
+  -   Suggest actionable next steps for further investigation or business decisions.
+
+  **CRITICAL PLOT EMBEDDING RULES:**
+  {plot_embedding_instructions}
+
+  **ADDITIONAL FORMATTING RULES:**
+  - **Plain Text Variables:** Do not use TeX/LaTeX formatting for variables (e.g., write 'K' or 'WCSS', not '$K or '$WCSS). All variables and acronyms should be plain text.
+  --- PROVIDED DATA (BEGIN) ---
+  JSON Data Outputs:
+  {all_json_data_str}
+
+  Plot Files Summary: {plot_files_summary}
+
+  Execution Log (for reference): {log_content}
+  --- PROVIDED DATA (END) ---
+
+  Begin the report below:
