@@ -44,10 +44,10 @@ import yaml
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, Response
 from langchain.prompts import PromptTemplate
-from langchain_community.chat_models import ChatOllama
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import Runnable, RunnableLambda
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_ollama import ChatOllama
 from PIL import Image
 from pydantic import BaseModel, Field, ValidationError
 from starlette.staticfiles import StaticFiles

@@ -130,6 +130,8 @@ langsmith==0.1.147
     #   langchain
     #   langchain-community
     #   langchain-core
+langchain-ollama==0.1.0
+    # via -r requirements.in
 markdown==3.9
     # via -r requirements.in
 marshmallow==3.26.1

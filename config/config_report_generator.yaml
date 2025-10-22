@@ -17,7 +17,7 @@ llm:
   # --- Provider Selection ---
   # Choose your provider here. This determines which settings block below is used.
   # OPTIONS: "gemini" (cloud-based) or "ollama" (local)
-  provider: "gemini"
+  provider: "ollama"
 
   # --- Gemini Settings (used if provider is "gemini") ---
   gemini_settings:
@@ -34,7 +34,7 @@ llm:
     #   Examples: "llama3", "phi3", "mistral"
     # - For multimodal models (required for static PNG plots):
     #   Examples: "llava", "moondream"
-    model_name: "llava:latest"
+    model_name: "deepseek-r1:latest"
 
 # -----------------------------------------------------------------------------
 # 2. Report & Visuals Configuration

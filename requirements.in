@@ -29,3 +29,5 @@ ollama
 langchain
 langchain-google-genai
 langchain-community
+langchain-ollama
+langchain-text-splitters
