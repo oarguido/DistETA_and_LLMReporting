@@ -4,7 +4,7 @@
 
 import logging
 import re
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple, cast
 
 import numpy as np
 import pandas as pd
@@ -49,7 +49,10 @@ def encode_categorical_features(
             for col in ([grouping_column] + continuous_columns)
             if col and col in df.columns
         ]
-        return df_to_encode[cols_to_keep].copy() if cols_to_keep else pd.DataFrame()
+        result_df = (
+            df_to_encode[cols_to_keep].copy() if cols_to_keep else pd.DataFrame()
+        )
+        return cast(pd.DataFrame, result_df)
     encoded_df = pd.get_dummies(df_to_encode, columns=valid_categorical, dtype=float)
     final_order = []
     if grouping_column and grouping_column in encoded_df.columns:
@@ -59,7 +62,7 @@ def encode_categorical_features(
     final_order.extend(
         sorted([col for col in encoded_df.columns if col.startswith(cat_prefixes)])
     )
-    return encoded_df[list(dict.fromkeys(final_order))]
+    return cast(pd.DataFrame, encoded_df[list(dict.fromkeys(final_order))])
 
 
 def get_encoded_column_names(
@@ -172,7 +175,7 @@ def calculate_combination_threshold(
                 )
 
         logger.info(f"Using 'auto-knee' method with sensitivity S={sensitivity}.")
-        sorted_sizes = combination_sizes.sort_values(ascending=False).values
+        sorted_sizes = combination_sizes.sort_values(ascending=False).values  # type: ignore
 
         if len(sorted_sizes) < 3:
             logger.warning(
@@ -294,7 +297,7 @@ def quantize_and_dummify(
             f"Error during pd.get_dummies for '{CLASS_COL}' (from '{column_name}'): {e}"
         )
         raise
-    return df_processed, actual_bin_edges
+    return df_processed, cast(np.ndarray, actual_bin_edges)
 
 
 def aggregate_by_comb(df: pd.DataFrame) -> pd.DataFrame:
@@ -318,7 +321,8 @@ def aggregate_by_comb(df: pd.DataFrame) -> pd.DataFrame:
     combination_cols = [col for col in numeric_cols if col.startswith(QUANT_PREFIX)]
     if not combination_cols:
         logger.warning(f"No numeric '{QUANT_PREFIX}*' columns found for aggregation.")
-        return df[[COMB_COL]].drop_duplicates().reset_index(drop=True)
+        result_df = df[[COMB_COL]].drop_duplicates().reset_index(drop=True)
+        return cast(pd.DataFrame, result_df)
     try:
         df_aggregated = (
             df.groupby(COMB_COL, observed=True)[combination_cols].sum().reset_index()

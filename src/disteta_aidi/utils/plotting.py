@@ -2,7 +2,7 @@
 # DistETA-AIDI analysis pipeline using Plotly. It includes functions for plotting
 # initial distributions, silhouette analysis, and final cluster profiles.
 import logging
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, cast
 
 import numpy as np
 import pandas as pd
@@ -89,7 +89,7 @@ def plot_continuous_histograms(
     if grouping_column_name and grouping_column_name in df.columns:
         try:
             groups = sorted(df[grouping_column_name].dropna().unique().tolist())
-            if df[grouping_column_name].isnull().any():
+            if bool(df[grouping_column_name].isnull().any()):
                 groups.append(np.nan)
             n_groups, is_grouped = len(groups), True
         except Exception as e:
@@ -114,7 +114,9 @@ def plot_continuous_histograms(
     colors = px.colors.qualitative.Plotly
     for i, current_group_value in enumerate(groups):
         group_df = df
-        is_nan_group = pd.isna(current_group_value)
+        is_nan_group = isinstance(current_group_value, float) and np.isnan(
+            current_group_value
+        )
 
         if is_grouped and grouping_column_name is not None:
             group_df = (
@@ -145,7 +147,11 @@ def plot_continuous_histograms(
             if is_grouped:
                 title_line1 += f" for {display_group_name}"
 
-            if cont_col not in group_df.columns or group_df[cont_col].dropna().empty:
+            has_data = (
+                cont_col in group_df.columns
+                and cast(pd.Series, group_df[cont_col]).notna().any()
+            )
+            if not has_data:
                 title_line1 += " (No Data)"
                 fig.update_xaxes(showticklabels=False, row=subplot_row, col=subplot_col)
                 fig.update_yaxes(showticklabels=False, row=subplot_row, col=subplot_col)
@@ -171,9 +177,14 @@ def plot_continuous_histograms(
             full_subplot_title = f"{title_line1}<br>{count_str}"
             fig.update_xaxes(title_text=x_axis_label, row=subplot_row, col=subplot_col)
             fig.update_yaxes(title_text="Density", row=subplot_row, col=subplot_col)
+            layout = cast(go.Layout, fig.layout)
             annotation_index = i * n_cols_per_group + j
-            if annotation_index < len(fig.layout.annotations):
-                fig.layout.annotations[annotation_index].text = full_subplot_title
+            if annotation_index < len(
+                cast(List[go.layout.Annotation], layout.annotations)
+            ):
+                cast(List[go.layout.Annotation], layout.annotations)[
+                    annotation_index
+                ].text = full_subplot_title
 
     overall_fig_title = "Distribution of Continuous Variables"
     if grouping_column_name:
@@ -188,8 +199,11 @@ def plot_continuous_histograms(
         template="plotly_dark",
         margin=dict(t=120, b=50, l=50, r=50),
     )
-    for annotation in fig.layout.annotations:
-        annotation.font.size = 12
+    layout = cast(go.Layout, fig.layout)
+    if layout.annotations:
+        for annotation in layout.annotations:
+            if annotation.font:
+                annotation.font.size = 12  # type: ignore
 
     if not save_non_interactive:
         fig.show()
@@ -253,8 +267,15 @@ def _plot_silhouette(fig, X, cluster_labels, n_clusters, silh_scores):
             row=1,
             col=1,
         )
-        fig.layout.annotations[0].text = f"Silhouette Plot (Avg: {silhouette_avg:.2f})"
+        layout = cast(go.Layout, fig.layout)
+        if (
+            len(cast(List[go.layout.Annotation], layout.annotations)) > 0
+        ):  # Check if annotations exist
+            cast(List[go.layout.Annotation], layout.annotations)[
+                0
+            ].text = f"Silhouette Plot (Avg: {silhouette_avg:.2f})"
     else:
+        layout = cast(go.Layout, fig.layout)
         fig.add_annotation(
             x=0.5,
             y=0.5,
@@ -265,7 +286,12 @@ def _plot_silhouette(fig, X, cluster_labels, n_clusters, silh_scores):
         )
         fig.update_xaxes(showticklabels=False, row=1, col=1)
         fig.update_yaxes(showticklabels=False, row=1, col=1)
-        fig.layout.annotations[0].text = f"Silhouette Plot (K={n_clusters} Invalid/NA)"
+        if (
+            len(cast(List[go.layout.Annotation], layout.annotations)) > 0
+        ):  # Check if annotations exist
+            cast(List[go.layout.Annotation], layout.annotations)[
+                0
+            ].text = f"Silhouette Plot (K={n_clusters} Invalid/NA)"
 
 
 def _plot_scatter_2d(fig, X, cluster_labels, n_clusters):
@@ -322,14 +348,26 @@ def _plot_scatter_2d(fig, X, cluster_labels, n_clusters):
             logger.warning(f"Could not plot cluster centers for K={n_clusters}: {e}")
         fig.update_xaxes(title_text="Principal Component 1", row=1, col=2)
         fig.update_yaxes(title_text="Principal Component 2", row=1, col=2)
-        fig.layout.annotations[1].text = "Clustered Data (PCA Projection)"
+        layout = cast(go.Layout, fig.layout)
+        if (
+            len(cast(List[go.layout.Annotation], layout.annotations)) > 1
+        ):  # Check if annotations exist
+            cast(List[go.layout.Annotation], layout.annotations)[
+                1
+            ].text = "Clustered Data (PCA Projection)"
     else:
+        layout = cast(go.Layout, fig.layout)
         fig.add_annotation(
             x=0.5, y=0.5, text="Data has < 2 features", showarrow=False, row=1, col=2
         )
         fig.update_xaxes(showticklabels=False, row=1, col=2)
         fig.update_yaxes(showticklabels=False, row=1, col=2)
-        fig.layout.annotations[1].text = "Clustered Data"
+        if (
+            len(cast(List[go.layout.Annotation], layout.annotations)) > 1
+        ):  # Check if annotations exist
+            cast(List[go.layout.Annotation], layout.annotations)[
+                1
+            ].text = "Clustered Data"
 
 
 def _plot_elbow(fig, wcss_values, range_n_clusters, n_clusters):
@@ -379,14 +417,26 @@ def _plot_elbow(fig, wcss_values, range_n_clusters, n_clusters):
             title_text="Number of Clusters (K)", tickvals=k_list, row=1, col=3
         )
         fig.update_yaxes(title_text="WCSS", row=1, col=3)
-        fig.layout.annotations[2].text = "Elbow Method for KMeans"
+        layout = cast(go.Layout, fig.layout)
+        if (
+            len(cast(List[go.layout.Annotation], layout.annotations)) > 2
+        ):  # Check if annotations exist
+            cast(List[go.layout.Annotation], layout.annotations)[
+                2
+            ].text = "Elbow Method for KMeans"
     else:
+        layout = cast(go.Layout, fig.layout)
         fig.add_annotation(
             x=0.5, y=0.5, text="No WCSS data", showarrow=False, row=1, col=3
         )
         fig.update_xaxes(showticklabels=False, row=1, col=3)
         fig.update_yaxes(showticklabels=False, row=1, col=3)
-        fig.layout.annotations[2].text = "Elbow Method (No Valid Data)"
+        if (
+            len(cast(List[go.layout.Annotation], layout.annotations)) > 2
+        ):  # Check if annotations exist
+            cast(List[go.layout.Annotation], layout.annotations)[
+                2
+            ].text = "Elbow Method (No Valid Data)"
 
 
 def plot_silhouette_and_elbow(
@@ -435,8 +485,11 @@ def plot_silhouette_and_elbow(
         template="plotly_dark",
         margin=dict(t=80, b=50, l=50, r=50),
     )
-    for annotation in fig.layout.annotations:
-        annotation.font.size = 12
+    layout = cast(go.Layout, fig.layout)
+    if layout.annotations:
+        for annotation in layout.annotations:
+            if annotation.font:
+                annotation.font.size = 12  # type: ignore
 
     if not save_non_interactive:
         fig.show()
@@ -480,8 +533,11 @@ def plot_cluster_distributions(
             var_name="classes",
             value_name="count",
         )
-        melted_df[CLASS_COL_NUM] = pd.to_numeric(
-            melted_df["classes"].str.replace(QUANT_PREFIX, ""), errors="coerce"
+        melted_df[CLASS_COL_NUM] = cast(
+            pd.Series,
+            pd.to_numeric(
+                melted_df["classes"].str.replace(QUANT_PREFIX, ""), errors="coerce"
+            ),
         ).astype(int)
     except Exception as e:
         logger.error(f"Error melting or processing DataFrame for {df_name_suffix}: {e}")
@@ -563,7 +619,9 @@ def plot_cluster_distributions(
                             <= interval.get("end_bin_label")
                         )
                     ]
-                    if not interval_bins_data.empty:
+                    if (
+                        interval_bins_data.size > 0
+                    ):  # Check if not empty using .size for type safety
                         max_y_in_interval = interval_bins_data["count"].max()
 
                 annotation_y, yshift, xanchor = max_y_in_interval, 20, "center"

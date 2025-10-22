@@ -1,7 +1,7 @@
 # This module provides functions for performing K-Means clustering, evaluating
 # cluster quality, and identifying optimal cluster counts.
 import logging
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple, cast
 
 import numpy as np
 import pandas as pd
@@ -40,7 +40,7 @@ def perform_clustering(X: pd.DataFrame | np.ndarray, k: int) -> KMeans:
             f"Number of clusters (k={k}) cannot be greater than number of samples ({n_samples})."
         )
     try:
-        clusterer = KMeans(n_clusters=k, random_state=10, n_init=20)
+        clusterer = KMeans(n_clusters=k, random_state=10, n_init=20)  # type: ignore
         clusterer.fit(X)
         return clusterer
     except Exception as e:
@@ -144,7 +144,7 @@ def filter_silhouette_scores(scores: Dict[int, float]) -> Dict[int, float]:
         logger.warning("Input scores dictionary is empty.")
         return {}
     try:
-        score_df = pd.DataFrame(list(scores.items()), columns=["k_value", "score"])
+        score_df = pd.DataFrame(list(scores.items()), columns=["k_value", "score"])  # type: ignore
         score_df["score"] = pd.to_numeric(score_df["score"], errors="coerce")
         score_df.dropna(subset=["score"], inplace=True)
     except Exception as e:
@@ -226,6 +226,7 @@ def perform_clustering_and_aggregation(
         raise ValueError("Input DataFrame 'df_aggregated_by_combination' is empty.")
 
     X = df_aggregated_by_combination[combination_cols].copy()
+    X = cast(pd.DataFrame, X)
     try:
         clusterer = perform_clustering(X, k)
 
@@ -240,9 +241,9 @@ def perform_clustering_and_aggregation(
         return df_final_aggregation, df_with_clusters
     except Exception as e:
         logger.error(f"Error during final clustering or aggregation for K={k}: {e}")
-        empty_df_agg = pd.DataFrame(columns=[CLUSTER_COL] + combination_cols)
+        empty_df_agg = pd.DataFrame(columns=[CLUSTER_COL] + combination_cols)  # type: ignore
         empty_df_map = pd.DataFrame(
-            columns=df_aggregated_by_combination.columns.tolist() + [CLUSTER_COL]
+            columns=df_aggregated_by_combination.columns.tolist() + [CLUSTER_COL]  # type: ignore
         )
         return empty_df_agg, empty_df_map
 
@@ -260,7 +261,7 @@ def calculate_hdr_for_cluster(
     returns only the one containing the most data points (the highest "mass").
     """
     c_cols = cluster_data.filter(like=QUANT_PREFIX)
-    if c_cols.empty:
+    if c_cols.size == 0:
         return {"hdr_threshold_count": 0.0, "hdr_intervals": []}
 
     c_cols.index = c_cols.index.str.replace(QUANT_PREFIX, "").astype(int)
@@ -278,7 +279,7 @@ def calculate_hdr_for_cluster(
         return {"hdr_threshold_count": max_y + 1, "hdr_intervals": []}
 
     positive_counts_series = counts_per_bin[counts_per_bin > 0]
-    if positive_counts_series.empty:
+    if positive_counts_series.size == 0:
         return {"hdr_threshold_count": 0.0, "hdr_intervals": []}
 
     max_bin_count = int(positive_counts_series.max())
@@ -286,7 +287,7 @@ def calculate_hdr_for_cluster(
     for y_candidate_int in range(max_bin_count, -1, -1):
         y_candidate = float(y_candidate_int)
         current_visual_hdr_mass = (
-            (positive_counts_series - y_candidate).clip(lower=0).sum()
+            (positive_counts_series - y_candidate).clip(lower=0).sum()  # type: ignore
         )
         if current_visual_hdr_mass >= target_visual_hdr_mass:
             if current_visual_hdr_mass < min_overshoot_mass:
@@ -303,7 +304,7 @@ def calculate_hdr_for_cluster(
     if hdr_bins_for_intervals.sum() < HDR_THRESHOLD_MIN_COUNT:
         return {"hdr_threshold_count": hdr_line_y_value, "hdr_intervals": []}
 
-    hdr_bin_indices = sorted(hdr_bins_for_intervals.index.tolist())
+    hdr_bin_indices = sorted(cast(pd.Series, hdr_bins_for_intervals).index.tolist())
     if not hdr_bin_indices:
         return {"hdr_threshold_count": hdr_line_y_value, "hdr_intervals": []}
 
