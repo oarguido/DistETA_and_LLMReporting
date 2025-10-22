@@ -18,4 +18,4 @@ REPORTS_DIR_NAME = "reports"
 # Used by disteta_aidi
 DISTETA_CONFIG_FILENAME = "config_disteta_AIDI.yaml"
 # Used by report_generator
-REPORT_GEN_CONFIG_FILENAME = "config_report_generator_AIDI.yaml"
+REPORT_GEN_CONFIG_FILENAME = "config_report_generator.yaml"

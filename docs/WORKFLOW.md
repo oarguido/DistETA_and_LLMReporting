@@ -128,7 +128,7 @@ For each final cluster, the script identifies its High-Density Region. The HDR r
 *   **`assets/`**: Contains static resource files like images and audio clips used in documentation.
 *   **`config/`**: Contains all YAML configuration files.
     *   `config_disteta_AIDI.yaml`: Configures the analysis application.
-    *   `config_report_generator_AIDI.yaml`: Configures the reporting application and LLM prompts.
+    *   `config_report_generator.yaml`: Configures the reporting application and LLM prompts.
 *   **`data/`**: Directory to store your input data files (e.g., `.csv`, `.parquet`).
 *   **`output/`**: Default directory where all generated run folders are saved. Each run creates a unique subfolder.
 *   **`scripts/`**: Holds small, one-off utility or testing scripts.
@@ -167,7 +167,7 @@ A command-line script to fetch and list all available Google Gemini models assoc
     -   Connects to the Google AI API using the `GOOGLE_API_KEY` environment variable.
     -   Prints a detailed list of all available models, including their name, description, token limits, and supported methods.
     -   If `pandas` is installed, it also prints a clean, tabular summary of the models.
--   **Usage**:
+-   **Usage**: To help you identify the correct model names to use in the `config_report_generator.yaml` configuration file.
     ```bash
     python scripts/google_genai_models.py
     ```
@@ -225,7 +225,7 @@ The pipeline is a two-step process: first you run the analysis, then you generat
 ### Step 2: Configure and Generate the Report
 
 1.  **Edit `config/config_report_generator_AIDI.yaml`:**
-    -   Under the `llm` section, set the `provider` to either `"gemini"` or `"ollama"`.
+    -   Edit `config/config_report_generator.yaml`. Under the `llm` section, set the `provider` to either `"gemini"` or `"ollama"`.
     -   If using Ollama, ensure `ollama_model_name` matches a model you have pulled.
     -   (Optional) Customize the `llm_prompt_template` to change the structure or tone of the report.
 
@@ -352,7 +352,7 @@ The server will start, and you can access the newly generated report at **http:/
 
 If you have Ollama running on your host machine and want to use it instead of Gemini:
 
-1.  In `config/config_report_generator_AIDI.yaml`, set the `provider` to `"ollama"`.
+1.  In `config/config_report_generator.yaml`, set the `provider` to `"ollama"`.
 2.  Run both the `report_generator` and the `ollama` proxy service together:
 
     ```bash

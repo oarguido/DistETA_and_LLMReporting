@@ -76,30 +76,31 @@ llm_prompt_template: |
 
   You have been provided with the following information from an analysis run:
   1.  Run Directory Name: `{run_directory_name}`
-  2.  JSON Data Outputs: A collection of JSON files containing run parameters, metrics, and results.
-  3.  Plot Files Summary: A list of all plot files (PNG or HTML) found in the 'graphics' subfolder.
+  2.  Run Timestamp: `{run_timestamp_str}`
+  3.  JSON Data Outputs: A collection of JSON files containing run parameters, metrics, and results.
+  4.  Plot Files Summary: A list of all plot files (PNG or HTML) found in the 'graphics' subfolder.
 
   **Structure your report following this narrative flow:**
 
   **1. Introduction:**
-  -   Start with a high-level summary of the analysis. What was the goal?
-  -   Use the `run_summary.json` data to briefly describe the dataset and the main variable being analyzed.
+  -   Start with a high-level summary of the analysis, noting that it was performed on **{run_timestamp_str}**. What was the goal?
+  -   Analyze the provided JSON data to identify the overall run parameters, dataset description, and the main variable being analyzed.
 
   **2. Overall Data Distribution:**
   -   Begin by describing the initial distribution of the continuous variable for each group.
-  -   **Embed and reference the `continuous_histograms.png` plot here.**
-  -   Discuss what the shape of the histograms (e.g., skewness, peaks) suggests about the data before any clustering is performed.
+  -   **Identify and embed the plot(s) showing initial distributions (e.g., histograms).**
+  -   Discuss what the shape of these distributions suggests about the data before any clustering is performed.
 
   **3. Determining the Optimal Number of Clusters (K):**
-  -   Explain how the optimal number of clusters was chosen for each analysis segment (e.g., for each route).
-  -   Use the data from `k_selection_summary.json` to explain the decision. Discuss the WCSS (Elbow Method) and Silhouette scores from the `silhouette_scores_by_segment` key, and the final choice from the `optimal_k_values` key.
-  -   For each segment, **find the plot from the 'Available image files' list that corresponds to the optimal K value and embed it here.** For example, if `k_selection_summary.json` says the optimal K for `sin_lis_total_time` is 4, you should find and embed the `silhouette_elbow_sin_lis_total_time_K4.png` plot.
+  -   Explain how the optimal number of clusters was chosen for each analysis segment.
+  -   Analyze the provided JSON data (e.g., k-selection summaries) to explain the decision, discussing metrics like WCSS (Elbow Method) and Silhouette scores.
+  -   For each segment, **identify and embed the plot(s) that illustrate the K-selection process (e.g., silhouette and elbow plots) for the chosen optimal K value.**
 
   **4. In-Depth Cluster Profile Analysis:**
-  -   This is the most important section. For each analysis segment (e.g., each route):
-      a. **Embed and reference the main `cluster_distributions_....png` plot.**
-      b. For each cluster shown in that plot (e.g., Cluster 0, Cluster 1, etc.), provide a detailed profile.
-      c. **Synthesize information for each cluster from `final_cluster_profiles.json`.** This file now contains the main distribution (`bin_profiles`) and the High-Density Region (`hdr_profile`) for each cluster. Discuss:
+  -   This is the most important section. For each analysis segment:
+      a. **Identify and embed the plot(s) showing the final cluster distributions.**
+      b. For each cluster shown in that plot, provide a detailed profile.
+      c. **Synthesize information for each cluster from the provided JSON data (e.g., final cluster profiles).** Discuss:
          - The size of the cluster (number of items).
          - The shape of its distribution (e.g., "sharply peaked, indicating low variability" or "wide and flat, indicating high variability").
          - The High-Density Region (HDR) that represents its most common outcome.

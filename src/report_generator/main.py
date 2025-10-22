@@ -35,6 +35,7 @@ import os
 import re
 import time
 import webbrowser
+from datetime import datetime
 from typing import Dict, Optional
 
 import markdown
@@ -76,7 +77,7 @@ except ImportError:
 
 # --- Application Configuration ---
 DEFAULT_REPORT_CONFIG_PATH = os.path.join(
-    constants.CONFIG_DIR, constants.REPORT_GEN_CONFIG_FILENAME
+    constants.CONFIG_DIR, "config_report_generator.yaml"
 )
 STYLE_SHEET_PATH = os.path.join(constants.ASSETS_DIR, "styles.css")
 
@@ -289,13 +290,6 @@ class AgnosticReportGenerator:
         json_subdir = os.path.join(run_dir, self.config.directory_structure.data_dir)
         if os.path.isdir(json_subdir):
             for json_file in sorted(glob.glob(os.path.join(json_subdir, "*.json"))):
-                # Exclude verbose composition summaries to reduce token count for the LLM.
-                # The LLM can infer composition from the other, more concise JSON files.
-                if "cluster_composition_summary" in os.path.basename(json_file):
-                    logger.info(
-                        f"  Excluding verbose JSON from LLM context: {os.path.basename(json_file)}"
-                    )
-                    continue
                 filename = os.path.basename(json_file)
                 try:
                     with open(json_file, "r", encoding="utf-8") as f:
@@ -447,8 +441,8 @@ class AgnosticReportGenerator:
 
         # Add JSON data to placeholder
         all_json_data_parts = [
-            f'<div class="code-block-header">Data from: {filename}</div><pre><code>{json.dumps(data, indent=2)}</code></pre>'
-            for filename, data in artifacts["json_data"].items()
+            f"<pre><code>{json.dumps(data, indent=2)}</code></pre>"
+            for data in artifacts["json_data"].values()
         ]
         all_json_data_str = "\n".join(all_json_data_parts)
         report_text += "## JSON Data Summary\n\n"
@@ -532,8 +526,20 @@ class AgnosticReportGenerator:
         Returns:
             A dictionary of formatted strings ready for the prompt template.
         """
+        run_dir_name = os.path.basename(run_dir)
+
+        # --- Extract and format timestamp ---
+        timestamp_str = run_dir_name[:15]  # e.g., "20251020_163947"
+        try:
+            dt_object = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")  # type: ignore
+            human_readable_timestamp = dt_object.strftime(
+                "%B %d, %Y, at %H:%M:%S UTC"
+            )  # Added UTC for clarity
+        except ValueError:
+            human_readable_timestamp = "an unknown time"  # Fallback
+
         all_json_data_parts = [
-            f"--- Data from: {filename} ---\n```json\n{json.dumps(data, indent=2)}"
+            f"```json\n{json.dumps(data, indent=2)}"
             for filename, data in artifacts["json_data"].items()
         ]
         all_json_data_str = (
@@ -548,15 +554,16 @@ class AgnosticReportGenerator:
             "html" if self.config.reporting.plot_type == "interactive" else "png"
         )
 
-        if artifacts["plots"]:
-            plot_list_str = "\n".join(
-                [f"- `{os.path.basename(p)}`" for p in artifacts["plots"]]
-            )
-            plot_files_summary = (
-                f"The following plot files (.{plot_extension}) were generated. "
-                "When you embed a plot, YOU MUST use the format specified in the rules.\n\n"
-                "Available plot files:\n" + plot_list_str
-            )
+        plot_list_str = (
+            "\n".join([f"- `{os.path.basename(p)}`" for p in artifacts["plots"]])
+            if artifacts["plots"]
+            else "No plot files available."
+        )
+        plot_files_summary = (
+            f"The following plot files (.{plot_extension}) were generated. "
+            "When you embed a plot, YOU MUST use the format specified in the rules.\n\n"
+            "Available plot files:\n" + plot_list_str
+        )
 
         if self.config.reporting.plot_type == "interactive":
             plot_embedding_instructions = f'You are generating a report with **interactive** plots. To embed a plot, you MUST use an `<iframe>` tag with a full path starting with `/{constants.OUTPUT_DIR}/` like this:\n`<iframe src="/{constants.OUTPUT_DIR}/{{run_directory_name}}/graphics/filename.html" width="100%" height="620px" style="border:none;"></iframe>`'
@@ -564,7 +571,8 @@ class AgnosticReportGenerator:
             plot_embedding_instructions = f"You are generating a report with **static** images. To embed a plot, you MUST use the standard Markdown image format with a full path starting with `/{constants.OUTPUT_DIR}/` like this:\n`![Descriptive Alt Text](/{constants.OUTPUT_DIR}/{{run_directory_name}}/graphics/filename.png)`"
 
         return {
-            "run_directory_name": os.path.basename(run_dir),
+            "run_directory_name": run_dir_name,
+            "run_timestamp_str": human_readable_timestamp,
             "log_content": artifacts.get("logs", "No execution log available."),
             "all_json_data_str": all_json_data_str,
             "plot_files_summary": plot_files_summary,
