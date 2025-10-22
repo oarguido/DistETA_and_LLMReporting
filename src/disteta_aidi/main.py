@@ -28,7 +28,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union, cast
 
 import numpy as np
 import pandas as pd
@@ -284,7 +284,8 @@ class DistetaAIDI:
             # The filter list uses the string "NaN" to represent null values.
             for key in available_group_keys:
                 # The key from groupby for the NaN group is np.nan.
-                if pd.isna(key):
+                # Use np.isnan for explicit NaN check on scalar floats, combined with isinstance for type safety.
+                if isinstance(key, float) and np.isnan(key):
                     if NAN_GROUP_KEY in filter_list:
                         target_group_keys.append(key)
                 elif key in filter_list:
@@ -294,8 +295,13 @@ class DistetaAIDI:
         for key in target_group_keys:
             group_df = grouped.get_group(key)
             if not group_df.empty:
-                # Use NAN_GROUP_KEY for the dictionary key if the group key is NaN
-                dict_key = NAN_GROUP_KEY if pd.isna(key) else str(key)
+                # Use NAN_GROUP_KEY for the dictionary key if the group key is NaN.
+                # Use np.isnan for explicit NaN check on scalar floats, combined with isinstance for type safety.
+                dict_key = (
+                    NAN_GROUP_KEY
+                    if isinstance(key, float) and np.isnan(key)
+                    else str(key)
+                )
                 groups_to_process[dict_key] = group_df
         return groups_to_process
 
@@ -377,8 +383,12 @@ class DistetaAIDI:
             f"Filtering by min combination size of {min_size_threshold} retained {retained_rows:,} of {total_rows:,} rows ({percent_retained:.2f}%)."
         )
 
-        self._save_dataframe(expanded_df_filtered, "01_filtered_pre_quantization_data")
-        return expanded_df_filtered, continuous_cols
+        self._save_dataframe(
+            cast(pd.DataFrame, expanded_df_filtered),
+            "01_filtered_pre_quantization_data",
+        )
+
+        return cast(pd.DataFrame, expanded_df_filtered), continuous_cols
 
     def _quantize_and_aggregate_segments(
         self,
@@ -423,7 +433,8 @@ class DistetaAIDI:
 
                 n_classes_to_use: int
                 if self.settings.n_classes_input == "auto":
-                    n_classes_to_use = calculate_optimal_bins(group_df[feature_col])
+                    series_to_quantize = cast(pd.Series, group_df[feature_col])
+                    n_classes_to_use = calculate_optimal_bins(series_to_quantize)
                     self.logger.info(
                         f"For group '{group_key}', feature '{feature_col}': Auto-calculated optimal bins = {n_classes_to_use}"
                     )
@@ -1008,7 +1019,10 @@ class DistetaAIDI:
                 summary_list_for_csv.append(csv_cat_summary)
 
                 if continuous_cols:
-                    desc_stats = cluster_df[continuous_cols].describe().transpose()
+                    continuous_data_for_describe = cast(
+                        pd.DataFrame, cluster_df[continuous_cols]
+                    )
+                    desc_stats = continuous_data_for_describe.describe().transpose()
                     desc_df = desc_stats.reset_index()
                     desc_df.rename(columns={"index": "column"}, inplace=True)
                     desc_df["cluster"] = cluster_id

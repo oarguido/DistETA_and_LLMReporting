@@ -36,7 +36,7 @@ import re
 import time
 import webbrowser
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import markdown
 import uvicorn
@@ -107,8 +107,8 @@ class LLMConfig(BaseModel):
     """Pydantic model for LLM provider and model configuration."""
 
     provider: str = "gemini"
-    gemini_settings: GeminiSettings = Field(default_factory=GeminiSettings)
-    ollama_settings: OllamaSettings = Field(default_factory=OllamaSettings)
+    gemini_settings: GeminiSettings = Field(default_factory=lambda: GeminiSettings())
+    ollama_settings: OllamaSettings = Field(default_factory=lambda: OllamaSettings())
 
 
 class DirectoryStructureConfig(BaseModel):
@@ -130,18 +130,18 @@ class VisualsConfig(BaseModel):
 class ReportingConfig(BaseModel):
     """Pydantic model for report appearance and content settings."""
 
-    plot_type: str = Field("static", pattern=r"^(static|interactive)$")
-    visuals: VisualsConfig = Field(default_factory=VisualsConfig)
+    plot_type: str = "static"
+    visuals: VisualsConfig = Field(default_factory=lambda: VisualsConfig())
 
 
 class ReportGeneratorConfig(BaseModel):
     """Main Pydantic model for the entire report generator configuration."""
 
-    reporting: ReportingConfig = Field(default_factory=ReportingConfig)
-    llm: LLMConfig = Field(default_factory=LLMConfig)
+    reporting: ReportingConfig = Field(default_factory=lambda: ReportingConfig())
+    llm: LLMConfig = Field(default_factory=lambda: LLMConfig())
     llm_prompt_template: str
     directory_structure: DirectoryStructureConfig = Field(
-        default_factory=DirectoryStructureConfig
+        default_factory=lambda: DirectoryStructureConfig()
     )
 
 
@@ -341,9 +341,7 @@ class AgnosticReportGenerator:
                 )
             model_name = self.config.llm.gemini_settings.model_name
             logger.info(f"Initializing LangChain Gemini model: {model_name}")
-            return ChatGoogleGenerativeAI(
-                model=model_name, google_api_key=GEMINI_API_KEY
-            )
+            return ChatGoogleGenerativeAI(model=model_name)
         elif provider == "ollama":
             if not ollama:
                 raise ImportError(
@@ -353,7 +351,10 @@ class AgnosticReportGenerator:
             if not model_name:
                 raise ValueError("Ollama provider selected, but no model name is set.")
             logger.info(f"Initializing LangChain Ollama model: {model_name}")
-            init_kwargs = {"model": model_name}
+            init_kwargs = {
+                "model": model_name,
+                "cache": False,
+            }
             if OLLAMA_BASE_URL:
                 init_kwargs["base_url"] = OLLAMA_BASE_URL
                 logger.info(f"  Connecting to Ollama at: {OLLAMA_BASE_URL}")
@@ -380,9 +381,11 @@ class AgnosticReportGenerator:
             final_prompt_str = prompt_template.format(**input_dict)
 
             # LangChain's multimodal input is a list of content blocks (text, image).
-            # The content for a HumanMessage can be a list of parts (text, images).
+            # The content for a HumanMessage can be a list of parts (text, image dictionaries).
             # The first part is always the text prompt.
-            message_content = [{"type": "text", "text": final_prompt_str}]
+            message_content: List[Union[str, Dict[Any, Any]]] = [
+                {"type": "text", "text": final_prompt_str}
+            ]
 
             # For static plots, load images and add to the message content
             if (
@@ -405,12 +408,11 @@ class AgnosticReportGenerator:
                             "utf-8"
                         )
                         # 4. Format as a data URI and append to the message
-                        message_content.append(
-                            {
-                                "type": "image_url",
-                                "image_url": f"data:image/png;base64,{img_base64}",
-                            }
-                        )
+                        image_part: Dict[Any, Any] = {
+                            "type": "image_url",
+                            "image_url": f"data:image/png;base64,{img_base64}",
+                        }
+                        message_content.append(image_part)
                     except Exception as e_img:
                         logger.warning(
                             f"Could not load image {img_path} for LLM: {e_img}"
@@ -501,11 +503,11 @@ class AgnosticReportGenerator:
         os.makedirs(reports_subdir, exist_ok=True)
 
         model_name = (
-            self.config.llm.ollama_settings.model_name
+            (self.config.llm.ollama_settings.model_name or "ollama_model")
             if self.config.llm.provider == "ollama"
             else self.config.llm.gemini_settings.model_name
         )
-        sanitized_model_name = re.sub(r"[/: ]", "_", model_name).replace(".", "")
+        sanitized_model_name = re.sub(r"[/: .]", "_", model_name)
         report_filename = f"llm_analysis_report_{sanitized_model_name}_{time.strftime('%Y%m%d_%H%M%S')}.md"
         report_filepath = os.path.join(reports_subdir, report_filename)
 
