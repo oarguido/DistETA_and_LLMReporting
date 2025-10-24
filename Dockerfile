@@ -6,7 +6,7 @@
 
 # --- Stage 1: Build Environment ---
 # Use an official Python runtime as a parent image
-FROM python:3.11-slim as builder
+FROM python:3.12-slim as builder
 
 # Set the working directory in the container
 WORKDIR /app
@@ -40,6 +40,9 @@ CMD ["pytest"]
 # the python interpreter, all system dependencies, and all pip packages.
 FROM builder
 
+# Create a non-root user
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+
 # Copy application source code, config, and data
 COPY src/ ./src/
 COPY config/ ./config/
@@ -47,10 +50,10 @@ COPY data/ ./data/
 COPY assets/ ./assets/
 
 # Create the output directory and set permissions
-RUN mkdir -p output && chown -R 1000:1000 output
+RUN mkdir -p output && chown -R appuser:appuser output
 
 # Switch to a non-root user for security
-USER 1000
+USER appuser
 
 # Environment variable for the Google API Key (for Gemini)
 # This should be provided at runtime (e.g., via docker-compose.yml)

@@ -91,8 +91,7 @@ def get_encoded_column_names(
 def generate_label(
     row: pd.Series, combination_columns: List[str], label_mapping_dict: dict
 ) -> int:
-    """
-    Generates a unique integer label for each distinct row-wise combination of values.
+    """Generates a unique integer label for each distinct row-wise combination of values.
 
     This function is used to create a single identifier ('comb') for each unique
     categorical profile in the data, using a memoization dictionary for efficiency.

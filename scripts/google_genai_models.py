@@ -8,6 +8,13 @@ try:
 except ImportError:
     pd = None
 
+# Optional: Load from .env file if available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 # --- Configuration ---
 GEMINI_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
@@ -91,5 +98,33 @@ def list_gemini_models_formatted():
         )
 
 
+def test_api_key():
+    """
+    Simple test to verify the API key is working.
+    """
+    if not GEMINI_API_KEY:
+        print("❌ Error: GOOGLE_API_KEY environment variable not set.")
+        print("Please set your API key using one of these methods:")
+        print("1. Export in terminal: export GOOGLE_API_KEY='your_key_here'")
+        print("2. Add to ~/.zshrc: echo 'export GOOGLE_API_KEY=\"your_key_here\"' >> ~/.zshrc")
+        print("3. Create a .env file in your project root with: GOOGLE_API_KEY=your_key_here")
+        return False
+    
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        # Try to list models to test the connection
+        models = list(client.models.list())
+        print(f"✅ API key is working! Found {len(models)} available models.")
+        return True
+    except Exception as e:
+        print(f"❌ API key test failed: {e}")
+        return False
+
+
 if __name__ == "__main__":
-    list_gemini_models_formatted()
+    print("Testing Google API key...")
+    if test_api_key():
+        print("\n" + "="*50)
+        list_gemini_models_formatted()
+    else:
+        print("\nPlease fix the API key issue and try again.")

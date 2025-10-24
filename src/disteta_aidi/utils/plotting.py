@@ -85,7 +85,20 @@ def plot_continuous_histograms(
     x_axis_label: str = "Value",
     save_non_interactive: bool = False,
 ):
-    """Plots histograms of continuous variables, optionally grouped by a column."""
+    """Plots histograms of continuous variables, optionally grouped by a column.
+
+    Args:
+        df: The DataFrame to plot.
+        continuous_columns: A list of column names to plot.
+        grouping_column_name: The name of the column to group by.
+        value_mapping_config: A dictionary to map values to display names.
+        column_name_mapping: A dictionary to map column names to display names.
+        x_axis_label: The label for the x-axis.
+        save_non_interactive: Whether to save the plot as a non-interactive file.
+
+    Returns:
+        A Plotly figure object.
+    """
     if grouping_column_name and grouping_column_name in df.columns:
         try:
             groups = sorted(df[grouping_column_name].dropna().unique().tolist())
@@ -510,7 +523,25 @@ def plot_cluster_distributions(
     hdr_threshold_percentage: Optional[float] = None,
     save_non_interactive: bool = False,
 ):
-    """Generates a grid of bar plots showing the distribution for each final cluster."""
+    """Generates a grid of bar plots showing the distribution for each final cluster.
+
+    Args:
+        df_cluster_c_sum: A DataFrame with the final aggregated cluster profiles.
+        df_name_suffix: A suffix for the plot title.
+        group_key: The key for the group being plotted.
+        feature_name: The name of the feature being plotted.
+        n_classes: The number of classes in the quantization.
+        value_mapping_config: A dictionary to map values to display names.
+        grouping_column_name: The name of the column to group by.
+        column_name_mapping: A dictionary to map column names to display names.
+        x_axis_label: The label for the x-axis.
+        hdr_info_for_plot: A dictionary containing HDR information for the plot.
+        hdr_threshold_percentage: The HDR threshold percentage.
+        save_non_interactive: Whether to save the plot as a non-interactive file.
+
+    Returns:
+        A Plotly figure object.
+    """
     if CLUSTER_COL not in df_cluster_c_sum.columns:
         logger.error(
             f"Error: '{CLUSTER_COL}' column missing in df_cluster_c_sum for {df_name_suffix}."

@@ -43,7 +43,7 @@ import uvicorn
 import yaml
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, Response
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import Runnable, RunnableLambda
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -247,6 +247,13 @@ class AgnosticReportGenerator:
         Returns:
             The absolute path to the latest run directory, or None if not found.
         """
+        done_filepath = os.path.join(constants.OUTPUT_DIR, ".analysis_done")
+        if os.path.exists(done_filepath):
+            with open(done_filepath, "r") as f:
+                run_dir = f.read().strip()
+                if os.path.isdir(run_dir):
+                    return run_dir
+
         if not os.path.isdir(self.base_output_dir):
             logger.error(f"Output directory '{self.base_output_dir}' not found.")
             return None
@@ -380,9 +387,9 @@ class AgnosticReportGenerator:
             )
             final_prompt_str = prompt_template.format(**input_dict)
 
-            # LangChain's multimodal input is a list of content blocks (text, image).
-            # The content for a HumanMessage can be a list of parts (text, image dictionaries).
-            # The first part is always the text prompt.
+            # LangChain’s multimodal input is a list of content blocks (text, image).
+            # The content for a HumanMessage can be a list of parts, where the first
+            # part is the text prompt, and subsequent parts are images.
             message_content: List[Union[str, Dict[Any, Any]]] = [
                 {"type": "text", "text": final_prompt_str}
             ]
@@ -418,10 +425,10 @@ class AgnosticReportGenerator:
                             f"Could not load image {img_path} for LLM: {e_img}"
                         )
 
-            # Chat models expect a list of messages, even if it's just one.
+            # Chat models expect a list of messages.
             return [HumanMessage(content=message_content)]
 
-        # This chain defines the sequence of operations
+        # Defines the sequence of operations for the report generation chain.
         return RunnableLambda(_prepare_llm_input) | llm
 
     def _create_placeholder_report(self, artifacts: Dict, run_dir_name: str) -> str:
@@ -611,7 +618,6 @@ class AgnosticReportGenerator:
             response_message = report_chain.invoke(chain_input)
             report_text = response_message.content
 
-            # --- Unified Token Extraction Logic ---
             # For recent LangChain versions, token usage is consistently in response_metadata.
             response_meta = getattr(response_message, "response_metadata", {})
             usage_data = response_meta.get("token_usage")
@@ -675,9 +681,9 @@ class AgnosticReportGenerator:
         """
         logger.info("Post-processing LLM output to ensure correct plot paths...")
 
-        # Regex for Markdown images: ![alt text](path)
+        # Regex to find Markdown images: ![alt text](path)
         markdown_image_regex = r"!\\[(.*?)\\]\((.*?)\""
-        # Regex for iframes: <iframe src="path" ...>
+        # Regex to find iframes: <iframe src="path" ...>
         iframe_regex = r'(<iframe\s+src=")(.*?)(".*?></iframe>)'
 
         def fix_path(match, is_iframe=False):
@@ -846,7 +852,6 @@ def create_fastapi_app(state: Dict) -> FastAPI:
     app = FastAPI()
 
     # Mount the entire 'output' directory to be served at the '/output' URL path.
-    # This is the standard and most robust way to handle static files.
     if os.path.isdir(constants.OUTPUT_DIR):
         app.mount(
             f"/{constants.OUTPUT_DIR}",

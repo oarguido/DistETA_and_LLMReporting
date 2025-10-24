@@ -13,7 +13,14 @@ logger = logging.getLogger(__name__)
 
 
 def load_config(config_path: str) -> dict:
-    """Loads a YAML configuration file."""
+    """Loads a YAML configuration file.
+
+    Args:
+        config_path: The path to the YAML configuration file.
+
+    Returns:
+        A dictionary containing the configuration.
+    """
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
@@ -30,7 +37,14 @@ def load_config(config_path: str) -> dict:
 
 
 def load_data(filepath: str) -> pd.DataFrame:
-    """Loads data from a file, supporting CSV, Parquet, and Excel formats."""
+    """Loads data from a file, supporting CSV, Parquet, and Excel formats.
+
+    Args:
+        filepath: The path to the data file.
+
+    Returns:
+        A pandas DataFrame containing the loaded data.
+    """
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"Data file not found at {filepath}")
     if os.path.getsize(filepath) == 0:
@@ -57,7 +71,15 @@ def load_data(filepath: str) -> pd.DataFrame:
 def identify_numeric_columns(
     df: pd.DataFrame, exclude_cols: Optional[List[str]] = None
 ) -> List[str]:
-    """Identifies numeric columns (integer and float types) in a DataFrame."""
+    """Identifies numeric columns (integer and float types) in a DataFrame.
+
+    Args:
+        df: The DataFrame to analyze.
+        exclude_cols: A list of column names to exclude from the search.
+
+    Returns:
+        A list of column names that are identified as numeric.
+    """
     if exclude_cols is None:
         exclude_cols = []
     valid_exclude_cols = {col for col in exclude_cols if col in df.columns}

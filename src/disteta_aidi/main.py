@@ -242,7 +242,8 @@ class DistetaAIDI:
         os.makedirs(self.graphics_output_path, exist_ok=True)
         os.makedirs(self.logs_output_path, exist_ok=True)
         self.logger.info(
-            f"Outputs for run '{self.run_config_name}' will be saved to: {self.run_specific_output_dir}"
+            f"Outputs for run '{self.run_config_name}' will be saved to: "
+            f"{self.run_specific_output_dir}"
         )
 
     def _get_groups_to_process(self, df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
@@ -284,7 +285,8 @@ class DistetaAIDI:
             # The filter list uses the string "NaN" to represent null values.
             for key in available_group_keys:
                 # The key from groupby for the NaN group is np.nan.
-                # Use np.isnan for explicit NaN check on scalar floats, combined with isinstance for type safety.
+                # Use np.isnan for explicit NaN check on scalar floats, combined
+                # with isinstance for type safety.
                 if isinstance(key, float) and np.isnan(key):
                     if NAN_GROUP_KEY in filter_list:
                         target_group_keys.append(key)
@@ -296,7 +298,8 @@ class DistetaAIDI:
             group_df = grouped.get_group(key)
             if not group_df.empty:
                 # Use NAN_GROUP_KEY for the dictionary key if the group key is NaN.
-                # Use np.isnan for explicit NaN check on scalar floats, combined with isinstance for type safety.
+                # Use np.isnan for explicit NaN check on scalar floats, combined
+                # with isinstance for type safety.
                 dict_key = (
                     NAN_GROUP_KEY
                     if isinstance(key, float) and np.isnan(key)
@@ -380,7 +383,9 @@ class DistetaAIDI:
         total_rows = len(expanded_df)
         percent_retained = (retained_rows / total_rows * 100) if total_rows > 0 else 0
         self.logger.info(
-            f"Filtering by min combination size of {min_size_threshold} retained {retained_rows:,} of {total_rows:,} rows ({percent_retained:.2f}%)."
+            f"Filtering by min combination size of {min_size_threshold} "
+            f"retained {retained_rows:,} of {total_rows:,} rows "
+            f"({percent_retained:.2f}%)."
         )
 
         self._save_dataframe(
@@ -436,21 +441,24 @@ class DistetaAIDI:
                     series_to_quantize = cast(pd.Series, group_df[feature_col])
                     n_classes_to_use = calculate_optimal_bins(series_to_quantize)
                     self.logger.info(
-                        f"For group '{group_key}', feature '{feature_col}': Auto-calculated optimal bins = {n_classes_to_use}"
+                        f"For group '{group_key}', feature '{feature_col}': "
+                        f"Auto-calculated optimal bins = {n_classes_to_use}"
                     )
                 elif isinstance(self.settings.n_classes_input, int):
                     n_classes_to_use = self.settings.n_classes_input
                 else:
                     self.logger.error(
                         f"Invalid value for 'quantization_n_classes_input': "
-                        f"'{self.settings.n_classes_input}'. Must be 'auto' or an integer. "
-                        f"Skipping processing for '{feature_col}' in group '{group_key}'."
+                        f"'{self.settings.n_classes_input}'. Must be 'auto' or an "
+                        f"integer. Skipping processing for '{feature_col}' in "
+                        f"group '{group_key}'."
                     )
                     continue
 
                 if n_classes_to_use <= 1:
                     self.logger.warning(
-                        f"Skipping '{feature_col}' for group '{group_key}': not enough data variance to create more than 1 bin."
+                        f"Skipping '{feature_col}' for group '{group_key}': not enough "
+                        f"data variance to create more than 1 bin."
                     )
                     continue
 
@@ -477,7 +485,8 @@ class DistetaAIDI:
                     )
                 except Exception as e:
                     self.logger.error(
-                        f"An unexpected error occurred while processing '{feature_col}' in group '{group_key}': {e}",
+                        f"An unexpected error occurred while processing '{feature_col}' "
+                        f"in group '{group_key}': {e}",
                         exc_info=True,
                     )
 
@@ -698,7 +707,9 @@ class DistetaAIDI:
                 column_name_mapping=self.settings.column_name_mapping,
                 x_axis_label=self.settings.quantized_axis_label_config,
                 hdr_info_for_plot=hdr_results.get(final_df_name, {}),
-                hdr_threshold_percentage=self.settings.hdr_threshold_percentage_config,
+                hdr_threshold_percentage=(
+                    self.settings.hdr_threshold_percentage_config
+                ),
                 save_non_interactive=True,
             )
             if fig:
@@ -712,6 +723,11 @@ class DistetaAIDI:
         log_filepath = os.path.join(
             self.logs_output_path, f"analysis_log_{self.run_config_name}.log"
         )
+        done_filepath = os.path.join(constants.OUTPUT_DIR, ".analysis_done")
+
+        if os.path.exists(done_filepath):
+            os.remove(done_filepath)
+
         file_handler = logging.FileHandler(log_filepath, encoding="utf-8")
         formatter = logging.Formatter(
             "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -723,7 +739,8 @@ class DistetaAIDI:
         try:
             start_time = time.time()
             self.logger.info(
-                f"--- Starting DistetaAIDI Analysis for config '{self.run_config_name}' ---"
+                f"--- Starting DistetaAIDI Analysis for config '"
+                f"{self.run_config_name}' ---"
             )
             df_filtered, continuous_cols = self._prepare_data()
             aggregated_dfs, quantization_params = self._quantize_and_aggregate_segments(
@@ -761,8 +778,12 @@ class DistetaAIDI:
             self._save_all_generated_figures()
             end_time = time.time()
             self.logger.info(
-                f"\nAnalysis for config '{self.run_config_name}' complete. Total time: {end_time - start_time:.2f}s."
+                f"\nAnalysis for config '{self.run_config_name}' complete. "
+                f"Total time: {end_time - start_time:.2f}s."
             )
+
+            with open(done_filepath, "w") as f:
+                f.write(self.run_specific_output_dir)
 
         finally:
             logging.getLogger().removeHandler(file_handler)
@@ -836,7 +857,8 @@ class DistetaAIDI:
                 fig.write_image(png_filepath, width=1280, height=720)
             except Exception as e:
                 self.logger.error(
-                    f"Failed to save PNG {png_filepath}: {e}. Ensure 'kaleido' is installed and up-to-date."
+                    f"Failed to save PNG {png_filepath}: {e}. Ensure 'kaleido' "
+                    f"is installed and up-to-date."
                 )
 
             html_filepath = os.path.join(
@@ -896,16 +918,21 @@ class DistetaAIDI:
             "categorical_columns_defined": self.settings.categorical_cols,
             "continuous_columns_analyzed": continuous_cols,
             "grouping_column_used": self.settings.grouping_col_config or "N/A",
-            "filter_values_for_grouping_column": self.settings.filter_values_config
-            or "all_available_groups_processed",
+            "filter_values_for_grouping_column": (
+                self.settings.filter_values_config or "all_available_groups_processed"
+            ),
             "min_combination_size_input": self.settings.min_comb_size_input,
             "quantization_n_classes_input": self.settings.n_classes_input,
             "clustering_k_range_tested": {
                 "min_k_config": self.settings.clustering_min_k,
                 "max_k_config": self.settings.clustering_max_k,
             },
-            "silhouette_score_drop_threshold_input_percentage": self.settings.percent_drop_threshold_input,
-            "hdr_threshold_percentage_input": self.settings.hdr_threshold_percentage_config,
+            "silhouette_score_drop_threshold_input_percentage": (
+                self.settings.percent_drop_threshold_input
+            ),
+            "hdr_threshold_percentage_input": (
+                self.settings.hdr_threshold_percentage_config
+            ),
         }
 
     def _parse_group_and_feature(
@@ -971,7 +998,8 @@ class DistetaAIDI:
             )
             if not dummified_cols:
                 self.logger.warning(
-                    f"No dummified categorical columns found for composition analysis in {segment_name}."
+                    f"No dummified categorical columns found for composition analysis "
+                    f"in {segment_name}."
                 )
                 return
 
@@ -1062,7 +1090,8 @@ class DistetaAIDI:
                     if isinstance(o, np.ndarray):
                         return o.tolist()
                     raise TypeError(
-                        f"Object of type {o.__class__.__name__} is not JSON serializable"
+                        f"Object of type {o.__class__.__name__} is not JSON "
+                        f"serializable"
                     )
 
                 json.dump(data, f, indent=4, default=default_converter)
@@ -1103,10 +1132,10 @@ class DistetaAIDI:
                         "bin_label": bin_num,
                         "count": float(count),
                         "percentage_of_cluster": (
-                            float(count) / total_items_in_cluster * 100
-                        )
-                        if total_items_in_cluster > 0
-                        else 0,
+                            (float(count) / total_items_in_cluster * 100)
+                            if total_items_in_cluster > 0
+                            else 0
+                        ),
                     }
                 )
 
@@ -1142,7 +1171,8 @@ def run_all_analyses():
         active_configs = multi_config.get("active_config_names")
         if not active_configs or not isinstance(active_configs, list):
             raise ValueError(
-                "Config file must contain a list key 'active_config_names' with at least one config block name."
+                "Config file must contain a list key 'active_config_names' "
+                "with at least one config block name."
             )
 
         main_logger.info(f"Found active configurations to run: {active_configs}")
@@ -1183,7 +1213,8 @@ def run_all_analyses():
 
     except FileNotFoundError:
         main_logger.error(
-            f"FATAL: The main configuration file was not found at '{DEFAULT_CONFIG_PATH}'"
+            f"FATAL: The main configuration file was not found at "
+            f"'{DEFAULT_CONFIG_PATH}'"
         )
         raise  # Re-raise to allow the caller to handle it
     except Exception as e:

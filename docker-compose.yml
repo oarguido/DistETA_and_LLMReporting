@@ -1,123 +1,79 @@
+x-base-service: &base-service
+  build:
+    context: .
+    dockerfile: Dockerfile
+  volumes:
+    - ./output:/app/output
+    - ./config:/app/config
+    - ./assets:/app/assets
+
+x-base-environment: &base-environment
+  TZ: Europe/Lisbon
+
 services:
-  # ===================================================================
-  # == Service 1: Run the DistETA-AIDI Analysis                      ==
-  # ===================================================================
   disteta_aidi:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    <<: *base-service
     container_name: disteta_aidi_analyzer
-    # The command overrides the Dockerfile's default CMD to run the analysis.
     command: >
       sh -c "python -m src.disteta_aidi.main"
-    volumes:
-      # Mount the output directory to persist results on the host machine.
-      - ./output:/app/output
-      # Mount config and assets for access to configuration and stylesheets.
-      - ./config:/app/config
-      - ./assets:/app/assets
     environment:
-      - TZ=Europe/Lisbon
-    # The 'profiles' key allows us to run this service on demand.
-    # To run it: docker-compose --profile analyze up
+      <<: *base-environment
+    healthcheck:
+      test: ["CMD", "test", "-f", "/app/output/.analysis_done"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     profiles:
       - analyze
+      - report
 
-  # ===================================================================
-  # == Service 2: Generate and Serve the LLM Report                  ==
-  # ===================================================================
   report_generator:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    <<: *base-service
     container_name: disteta_aidi_reporter
-    # This command runs the report generator and starts the web server.
-    # It depends on the analysis results being present in the 'output' volume.
     command: >
       sh -c "python -m src.report_generator.main --host 0.0.0.0"
     ports:
-      # Map port 5001 on the host to port 5001 in the container.
       - "5001:5001"
-    volumes:
-      # Mount the output directory to read analysis results.
-      - ./output:/app/output
-      # Mount config and assets for access to configuration and stylesheets.
-      - ./config:/app/config
-      - ./assets:/app/assets
     environment:
-      # Pass the Google API key from a .env file or the host environment.
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      - TZ=Europe/Lisbon
-      # When running with the 'ollama' profile, this URL allows the container
-      # to connect to the Ollama instance on your host machine.
-      - OLLAMA_BASE_URL=http://host.docker.internal:11434
-    # This service is run on demand with its profiles.
+      <<: *base-environment
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+    depends_on:
+      disteta_aidi:
+        condition: service_healthy
     profiles:
       - "report"
       - "ollama"
 
-  # ===================================================================
-  # == (Optional) Service 3: Local LLM with Ollama                   ==
-  # ===================================================================
-  # To use this, you must have Ollama installed on your host machine.
-  # This service exposes your host's Ollama instance to the other containers.
   ollama:
     image: busybox:latest
     container_name: disteta_aidi_ollama_proxy
-    # This trick allows the 'report_generator' container to access
-    # your host machine's Ollama server at http://ollama:11434
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command: "sleep infinity"
-    # The 'profiles' key allows us to run this service on demand.
-    # To run it: docker-compose --profile ollama up
     profiles:
       - ollama
 
-  # ===================================================================
-  # == Service 4: Run Analysis and Generate Report in one go         ==
-  # ===================================================================
   analyzer_and_reporter:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    <<: *base-service
     container_name: disteta_aidi_analyzer_reporter
-    # This command runs the analysis and then the report generator.
     command: >
       sh -c "python -m src.report_generator.main --run-analysis --host 0.0.0.0"
     ports:
-      # Map port 5001 on the host to port 5001 in the container.
       - "5001:5001"
-    volumes:
-      # Mount the output directory to persist and read analysis results.
-      - ./output:/app/output
-      # Mount config and assets for access to configuration and stylesheets.
-      - ./config:/app/config
-      - ./assets:/app/assets
     environment:
-      # Pass the Google API key from a .env file or the host environment.
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      - TZ=Europe/Lisbon
-      # When running with the 'ollama' profile, this URL allows the container
-      # to connect to the Ollama instance on your host machine.
-      - OLLAMA_BASE_URL=http://host.docker.internal:11434
-    # This service is run on demand with its profile.
+      <<: *base-environment
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
     profiles:
       - "analyze_report"
 
-  # ===================================================================
-  # == Service 5: Run the Test Suite                                 ==
-  # ===================================================================
   test:
     build:
       context: .
       dockerfile: Dockerfile
-      # This tells Docker Compose to build the 'test' stage from the Dockerfile.
       target: test
     container_name: disteta_aidi_tester
-    # The command overrides the Dockerfile's default CMD to run pytest.
     command: "pytest"
-    # The 'profiles' key allows us to run this service on demand.
-    # To run it: docker-compose --profile test up
     profiles:
       - test
