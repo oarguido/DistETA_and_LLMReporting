@@ -6,7 +6,7 @@
 
 # --- Stage 1: Build Environment ---
 # Use an official Python runtime as a parent image
-FROM python:3.12-slim as builder
+FROM python:3.12-slim AS builder
 
 # Set the working directory in the container
 WORKDIR /app
@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # --- Stage 2: Test Environment ---
 # This stage inherits from the builder and adds test-specific dependencies and code.
-FROM builder as test
+FROM builder AS test
 
 # Copy development requirements and install them
 COPY requirements-dev.txt .

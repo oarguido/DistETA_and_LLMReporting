@@ -25,7 +25,6 @@ services:
       retries: 5
     profiles:
       - analyze
-      - report
 
   report_generator:
     <<: *base-service
@@ -38,12 +37,9 @@ services:
       <<: *base-environment
       GOOGLE_API_KEY: ${GOOGLE_API_KEY}
       OLLAMA_BASE_URL: http://host.docker.internal:11434
-    depends_on:
-      disteta_aidi:
-        condition: service_healthy
-    profiles:
-      - "report"
-      - "ollama"
+    profiles: ["report"]
+    build:
+      context: .
 
   ollama:
     image: busybox:latest
