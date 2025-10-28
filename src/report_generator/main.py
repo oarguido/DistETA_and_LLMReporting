@@ -119,6 +119,8 @@ class DirectoryStructureConfig(BaseModel):
     graphics_dir: str = constants.GRAPHICS_DIR_NAME
     logs_dir: str = constants.LOGS_DIR_NAME
     reports_dir: str = constants.REPORTS_DIR_NAME
+    plot_type: str = "static"
+    artifact_file_formats: List[str] = ["json"]
 
 
 class VisualsConfig(BaseModel):
@@ -130,7 +132,6 @@ class VisualsConfig(BaseModel):
 class ReportingConfig(BaseModel):
     """Pydantic model for report appearance and content settings."""
 
-    plot_type: str = "static"
     visuals: VisualsConfig = Field(default_factory=lambda: VisualsConfig())
 
 
@@ -287,33 +288,34 @@ class AgnosticReportGenerator:
             A dictionary containing the collected artifacts.
         """
         artifacts = {
-            "json_data": {},
+            "data_artifacts": {},
             "plots": [],
             "logs": "",
-            "plot_type": self.config.reporting.plot_type,
+            "plot_type": self.config.directory_structure.plot_type,
         }
 
-        # --- Gather JSON Artifacts ---
-        json_subdir = os.path.join(run_dir, self.config.directory_structure.data_dir)
-        if os.path.isdir(json_subdir):
-            for json_file in sorted(glob.glob(os.path.join(json_subdir, "*.json"))):
-                filename = os.path.basename(json_file)
-                try:
-                    with open(json_file, "r", encoding="utf-8") as f:
-                        artifacts["json_data"][filename] = json.load(f)
-                except json.JSONDecodeError as e:
-                    logger.warning(f"Could not parse JSON file {filename}: {e}")
-                    artifacts["json_data"][filename] = f"Error parsing JSON: {e}"
-                except Exception as e:
-                    logger.warning(f"Could not read JSON file {filename}: {e}")
-                    artifacts["json_data"][filename] = f"Error reading file: {e}"
+        # --- Gather Data Artifacts (JSON, CSV, etc.) ---
+        data_subdir = os.path.join(run_dir, self.config.directory_structure.data_dir)
+        if os.path.isdir(data_subdir):
+            for file_format in self.config.directory_structure.artifact_file_formats:
+                for data_file in sorted(glob.glob(os.path.join(data_subdir, f"*.{file_format}"))):
+                    filename = os.path.basename(data_file)
+                    try:
+                        with open(data_file, "r", encoding="utf-8") as f:
+                            if file_format == "json":
+                                artifacts["data_artifacts"][filename] = json.load(f)
+                            else:
+                                artifacts["data_artifacts"][filename] = f.read()
+                    except Exception as e:
+                        logger.warning(f"Could not read data file {filename}: {e}")
+                        artifacts["data_artifacts"][filename] = f"Error reading file: {e}"
 
         # --- Gather Plot Artifacts ---
         graphics_subdir = os.path.join(
             run_dir, self.config.directory_structure.graphics_dir
         )
         plot_extension = (
-            "html" if self.config.reporting.plot_type == "interactive" else "png"
+            "html" if self.config.directory_structure.plot_type == "interactive" else "png"
         )
         if os.path.isdir(graphics_subdir):
             artifacts["plots"] = sorted(
@@ -396,7 +398,7 @@ class AgnosticReportGenerator:
 
             # For static plots, load images and add to the message content
             if (
-                self.config.reporting.plot_type == "static"
+                self.config.directory_structure.plot_type == "static"
                 and Image
                 and input_dict.get("plots")
             ):
@@ -448,21 +450,22 @@ class AgnosticReportGenerator:
         report_text = f"# Analysis Report for {run_dir_name}\n\n"
         report_text += "*(LLM report generation failed. This is a placeholder containing raw data.)*\n\n"
 
-        # Add JSON data to placeholder
-        all_json_data_parts = [
-            f"<pre><code>{json.dumps(data, indent=2)}</code></pre>"
-            for data in artifacts["json_data"].values()
-        ]
-        all_json_data_str = "\n".join(all_json_data_parts)
-        report_text += "## JSON Data Summary\n\n"
-        # The LLM is instructed to use ```json ... ```, but for placeholder we directly use HTML
-        # to ensure the header is applied correctly.
-        report_text += f"{all_json_data_str}\n\n"
+        # Add data artifacts to placeholder
+        all_data_artifacts_parts = []
+        for data in artifacts["data_artifacts"].values():
+            if isinstance(data, dict):
+                all_data_artifacts_parts.append(f"<pre><code>{json.dumps(data, indent=2)}</code></pre>")
+            else:
+                all_data_artifacts_parts.append(f"<pre><code>{data}</code></pre>")
+
+        all_data_artifacts_str = "\n".join(all_data_artifacts_parts)
+        report_text += "## Data Artifacts Summary\n\n"
+        report_text += f"{all_data_artifacts_str}\n\n"
 
         # Add plots to placeholder
         report_text += "## Plots\n\n"
         if artifacts["plots"]:
-            is_interactive = self.config.reporting.plot_type == "interactive"
+            is_interactive = self.config.directory_structure.plot_type == "interactive"
             for plot_path in artifacts["plots"]:
                 plot_filename = os.path.basename(plot_path)
                 correct_plot_path = f"{run_dir_name}/{self.config.directory_structure.graphics_dir}/{plot_filename}"
@@ -547,20 +550,23 @@ class AgnosticReportGenerator:
         except ValueError:
             human_readable_timestamp = "an unknown time"  # Fallback
 
-        all_json_data_parts = [
-            f"```json\n{json.dumps(data, indent=2)}"
-            for filename, data in artifacts["json_data"].items()
-        ]
-        all_json_data_str = (
-            "\n\n".join(all_json_data_parts)
-            if all_json_data_parts
-            else "No JSON data found."
+        all_data_artifacts_parts = []
+        for filename, data in artifacts["data_artifacts"].items():
+            if isinstance(data, dict):
+                all_data_artifacts_parts.append(f"```json\n{json.dumps(data, indent=2)}\n```")
+            else:
+                all_data_artifacts_parts.append(f"```text\n{data}\n```")
+
+        all_data_artifacts_str = (
+            "\n\n".join(all_data_artifacts_parts)
+            if all_data_artifacts_parts
+            else "No data artifacts found."
         )
 
         plot_embedding_instructions = ""
         plot_files_summary = "No plot files found in the 'graphics' directory."
         plot_extension = (
-            "html" if self.config.reporting.plot_type == "interactive" else "png"
+            "html" if self.config.directory_structure.plot_type == "interactive" else "png"
         )
 
         plot_list_str = (
@@ -574,7 +580,7 @@ class AgnosticReportGenerator:
             "Available plot files:\n" + plot_list_str
         )
 
-        if self.config.reporting.plot_type == "interactive":
+        if self.config.directory_structure.plot_type == "interactive":
             plot_embedding_instructions = f'You are generating a report with **interactive** plots. To embed a plot, you MUST use an `<iframe>` tag with a full path starting with `/{constants.OUTPUT_DIR}/` like this:\n`<iframe src="/{constants.OUTPUT_DIR}/{{run_directory_name}}/graphics/filename.html" width="100%" height="620px" style="border:none;"></iframe>`'
         else:  # static
             plot_embedding_instructions = f"You are generating a report with **static** images. To embed a plot, you MUST use the standard Markdown image format with a full path starting with `/{constants.OUTPUT_DIR}/` like this:\n`![Descriptive Alt Text](/{constants.OUTPUT_DIR}/{{run_directory_name}}/graphics/filename.png)`"
@@ -583,7 +589,7 @@ class AgnosticReportGenerator:
             "run_directory_name": run_dir_name,
             "run_timestamp_str": human_readable_timestamp,
             "log_content": artifacts.get("logs", "No execution log available."),
-            "all_json_data_str": all_json_data_str,
+            "all_data_artifacts_str": all_data_artifacts_str,
             "plot_files_summary": plot_files_summary,
             "plot_embedding_instructions": plot_embedding_instructions,
             "plots": artifacts.get("plots", []),
@@ -815,7 +821,7 @@ class AgnosticReportGenerator:
             logger.info(f"Found latest run directory to process: {run_dir_to_process}")
 
         artifacts = self._gather_run_artifacts(run_dir_to_process)
-        if not artifacts["json_data"] and not artifacts["plots"]:
+        if not artifacts["data_artifacts"] and not artifacts["plots"]:
             logger.warning(
                 "No data or plot artifacts found in the run directory. Cannot generate a meaningful report."
             )

@@ -23,7 +23,7 @@ llm:
   gemini_settings:
     # Specify the exact Gemini model name.
     # Examples: "gemini-flash-lite-latest", "gemini-pro-latest", "gemini-flash-latest"
-    model_name: "gemini-flash-lite-latest"
+    model_name: "gemini-flash-latest"
 
   # --- Ollama Settings (used if provider is "ollama") ---
   ollama_settings:
@@ -41,21 +41,34 @@ llm:
 #    - Controls the appearance and content of the final report.
 # -----------------------------------------------------------------------------
 reporting:
-  # --- Plot Type ---
-  # Defines how plots are embedded in the report.
-  #
-  # OPTIONS:
-  #  - "interactive": (Recommended) Embeds interactive HTML plots using <iframe_tags>.
-  #                   Works with any text-based LLM.
-  #  - "static":      Embeds static PNG images. Requires a multimodal LLM
-  #                   (like Gemini, Llava, or Moondream) that can "see" images.
-  plot_type: "interactive"
-
   # --- Visual Style ---
   visuals:
     # Defines the maximum width of the report's content area in pixels.
     # This value is also used to set the width of generated plot images.
     report_width_px: 1100
+
+# =============================================================================
+# == ADVANCED: Directory & File Structure                                    ==
+# =============================================================================
+#
+# This section defines where the script looks for input artifacts (plots, data)
+# and where it saves its outputs (reports).
+#
+# =============================================================================
+
+directory_structure:
+  # --- Plot Type ---
+  # Defines how plots are discovered and embedded in the report.
+  # OPTIONS:
+  #  - "interactive": Embeds interactive HTML plots.
+  #  - "static":      Embeds static PNG images (requires a multimodal LLM).
+  plot_type: "interactive"
+
+  # --- Artifact File Formats ---
+  # A list of file extensions for data artifacts to be gathered from the 'data'
+  # subdirectory of a run. These are read and included in the LLM prompt.
+  # COMMON OPTIONS: ["json", "csv"]
+  artifact_file_formats: ["json"]
 
 # =============================================================================
 # ==                      ADVANCED: LLM Prompt Template                      ==
@@ -120,8 +133,8 @@ llm_prompt_template: |
   **ADDITIONAL FORMATTING RULES:**
   - **Plain Text Variables:** Do not use TeX/LaTeX formatting for variables (e.g., write 'K' or 'WCSS', not '$K or '$WCSS). All variables and acronyms should be plain text.
   --- PROVIDED DATA (BEGIN) ---
-  JSON Data Outputs:
-  {all_json_data_str}
+  Data Artifacts Outputs:
+  {all_data_artifacts_str}
 
   Plot Files Summary: {plot_files_summary}
 
