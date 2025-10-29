@@ -1,8 +1,8 @@
 # =============================================================================
-# Dockerfile for DistETA-AIDI
+# Dockerfile for DistETA
 # =============================================================================
 # This Dockerfile creates a single image that can run both the analysis
-# (`disteta_aidi`) and the report generation (`report_generator`) modules.
+# (`disteta_batch`) and the report generation (`report_generator`) modules.
 
 # --- Stage 1: Build Environment ---
 # Use an official Python runtime as a parent image
@@ -60,4 +60,4 @@ USER appuser
 ENV GOOGLE_API_KEY=""
 
 # Default command (can be overridden)
-CMD ["python", "-m", "src.disteta_aidi.main"]
+CMD ["python", "-m", "src.disteta_batch.main"]

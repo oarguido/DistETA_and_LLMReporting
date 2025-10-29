@@ -43,8 +43,8 @@ import uvicorn
 import yaml
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, Response
-from langchain_core.prompts import PromptTemplate
 from langchain_core.messages import HumanMessage
+from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import Runnable, RunnableLambda
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama import ChatOllama
@@ -52,7 +52,7 @@ from PIL import Image
 from pydantic import BaseModel, Field, ValidationError
 from starlette.staticfiles import StaticFiles
 
-from src.disteta_aidi.main import run_all_analyses
+from src.disteta_batch.main import run_all_analyses
 
 from .. import constants
 
@@ -187,7 +187,7 @@ class AgnosticReportGenerator:
     Generates a comprehensive, LLM-driven analysis report.
 
     This class is 'agnostic' to the analysis itself, operating on the output
-    artifacts (logs, JSON summaries, plots) from a DistetaAIDI run. It finds
+    artifacts (logs, JSON summaries, plots) from a DistetaBatch run. It finds
     the specified or latest run directory, gathers all relevant data, and
     constructs a detailed prompt for a large
     language model (LLM) to generate a human-readable report in Markdown.
@@ -298,7 +298,9 @@ class AgnosticReportGenerator:
         data_subdir = os.path.join(run_dir, self.config.directory_structure.data_dir)
         if os.path.isdir(data_subdir):
             for file_format in self.config.directory_structure.artifact_file_formats:
-                for data_file in sorted(glob.glob(os.path.join(data_subdir, f"*.{file_format}"))):
+                for data_file in sorted(
+                    glob.glob(os.path.join(data_subdir, f"*.{file_format}"))
+                ):
                     filename = os.path.basename(data_file)
                     try:
                         with open(data_file, "r", encoding="utf-8") as f:
@@ -308,14 +310,18 @@ class AgnosticReportGenerator:
                                 artifacts["data_artifacts"][filename] = f.read()
                     except Exception as e:
                         logger.warning(f"Could not read data file {filename}: {e}")
-                        artifacts["data_artifacts"][filename] = f"Error reading file: {e}"
+                        artifacts["data_artifacts"][filename] = (
+                            f"Error reading file: {e}"
+                        )
 
         # --- Gather Plot Artifacts ---
         graphics_subdir = os.path.join(
             run_dir, self.config.directory_structure.graphics_dir
         )
         plot_extension = (
-            "html" if self.config.directory_structure.plot_type == "interactive" else "png"
+            "html"
+            if self.config.directory_structure.plot_type == "interactive"
+            else "png"
         )
         if os.path.isdir(graphics_subdir):
             artifacts["plots"] = sorted(
@@ -454,7 +460,9 @@ class AgnosticReportGenerator:
         all_data_artifacts_parts = []
         for data in artifacts["data_artifacts"].values():
             if isinstance(data, dict):
-                all_data_artifacts_parts.append(f"<pre><code>{json.dumps(data, indent=2)}</code></pre>")
+                all_data_artifacts_parts.append(
+                    f"<pre><code>{json.dumps(data, indent=2)}</code></pre>"
+                )
             else:
                 all_data_artifacts_parts.append(f"<pre><code>{data}</code></pre>")
 
@@ -553,7 +561,9 @@ class AgnosticReportGenerator:
         all_data_artifacts_parts = []
         for filename, data in artifacts["data_artifacts"].items():
             if isinstance(data, dict):
-                all_data_artifacts_parts.append(f"```json\n{json.dumps(data, indent=2)}\n```")
+                all_data_artifacts_parts.append(
+                    f"```json\n{json.dumps(data, indent=2)}\n```"
+                )
             else:
                 all_data_artifacts_parts.append(f"```text\n{data}\n```")
 
@@ -566,7 +576,9 @@ class AgnosticReportGenerator:
         plot_embedding_instructions = ""
         plot_files_summary = "No plot files found in the 'graphics' directory."
         plot_extension = (
-            "html" if self.config.directory_structure.plot_type == "interactive" else "png"
+            "html"
+            if self.config.directory_structure.plot_type == "interactive"
+            else "png"
         )
 
         plot_list_str = (
@@ -934,7 +946,7 @@ def main():
     parser.add_argument(
         "--run-analysis",
         action="store_true",
-        help="Run the full 'disteta_aidi' analysis before generating the report.",
+        help="Run the full 'disteta_batch' analysis before generating the report.",
     )
     args = parser.parse_args()
 

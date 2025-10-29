@@ -1,5 +1,5 @@
 # This module provides functions for generating all visualizations for the
-# DistETA-AIDI analysis pipeline using Plotly. It includes functions for plotting
+# DistETA analysis pipeline using Plotly. It includes functions for plotting
 # initial distributions, silhouette analysis, and final cluster profiles.
 import logging
 from typing import Dict, Iterable, List, Optional, cast

@@ -1,4 +1,4 @@
-# This module centralizes all shared constants for the DistETA-AIDI package
+# This module centralizes all shared constants for the DistETA package
 # to ensure consistency and adherence to the DRY (Don't Repeat Yourself)
 # principle.
 

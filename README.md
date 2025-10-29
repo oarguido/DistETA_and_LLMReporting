@@ -1,4 +1,4 @@
-# DistETA-AIDI: Distributional ETA Analysis & LLM Reporting
+# DistETA: Distributional ETA Analysis & LLM Reporting
 
 This project provides a robust, two-part pipeline for analyzing time-based operational data and generating insightful, human-readable reports using Large Language Models (LLMs). It moves beyond simple averages to understand the full *distribution* of outcomes, identifying distinct, recurring operational patterns.
 
@@ -41,7 +41,7 @@ For a detailed explanation of the project's workflow, architecture, and configur
     ```
 3.  **Run the analysis:**
     ```bash
-    python -m src.disteta_aidi.main
+    python -m src.disteta_batch.main
     ```
 4.  **Generate the report:**
     ```bash

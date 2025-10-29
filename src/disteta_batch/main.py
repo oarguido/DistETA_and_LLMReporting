@@ -1,7 +1,7 @@
 """
-This module, part of the DistETA-AIDI project, is the core analysis pipeline.
+This module, part of the DistETA project, is the core analysis pipeline.
 
-It defines the `DistetaAIDI` class, which orchestrates a configurable workflow
+It defines the `DistetaBatch` class, which orchestrates a configurable workflow
 for analyzing distributional data. The key responsibilities of this module are:
 
 1.  **Data Loading and Preparation**: Ingests data and prepares it for analysis.
@@ -17,7 +17,7 @@ function, which can be called from other scripts or executed directly.
 
 Execution:
     To run the analysis, execute this module as a script:
-    $ python -m src.disteta_aidi.main
+    $ python -m src.disteta_batch.main
 """
 
 # =============================================================================
@@ -171,9 +171,9 @@ class AnalysisSettings:
 
 
 # =============================================================================
-# MAIN ANALYSIS CLASS (The DistetaAIDI class)
+# MAIN ANALYSIS CLASS (The DistetaBatch class)
 # =============================================================================
-class DistetaAIDI:
+class DistetaBatch:
     """Orchestrates the DistETA (Distributional ETA) analysis pipeline.
 
     This class is the core of the analysis, executing a configurable workflow:
@@ -718,7 +718,7 @@ class DistetaAIDI:
                 )
 
     def run_analysis(self):
-        """Executes the full DistETA-AIDI analysis workflow."""
+        """Executes the full DistetaBatch analysis workflow."""
         self._setup_output_directories()
         log_filepath = os.path.join(
             self.logs_output_path, f"analysis_log_{self.run_config_name}.log"
@@ -739,8 +739,7 @@ class DistetaAIDI:
         try:
             start_time = time.time()
             self.logger.info(
-                f"--- Starting DistetaAIDI Analysis for config '"
-                f"{self.run_config_name}' ---"
+                f"--- Starting DistetaBatch Analysis for config '{self.run_config_name}' ---"
             )
             df_filtered, continuous_cols = self._prepare_data()
             aggregated_dfs, quantization_params = self._quantize_and_aggregate_segments(
@@ -1203,7 +1202,7 @@ def run_all_analyses():
             final_config = merge_dicts(final_config, run_config)
 
             settings = AnalysisSettings.from_dict(final_config)
-            analyzer = DistetaAIDI(
+            analyzer = DistetaBatch(
                 settings=settings,
                 base_output_path=constants.OUTPUT_DIR,
                 run_config_name=config_name,

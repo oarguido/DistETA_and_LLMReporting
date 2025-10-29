@@ -1,7 +1,7 @@
 import os
 import pytest
 import pandas as pd
-from src.disteta_aidi.utils.data_utils import load_config, load_data, identify_numeric_columns
+from src.disteta_batch.utils.data_utils import load_config, load_data, identify_numeric_columns
 
 
 def test_load_config():

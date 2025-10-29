@@ -1,10 +1,10 @@
-# DistETA-AIDI: Distributional ETA Analysis & LLM Reporting
+# DistETA: Distributional ETA Analysis & LLM Reporting
 
 This project provides a robust, two-part pipeline for analyzing time-based operational data and generating insightful, human-readable reports using Large Language Models (LLMs). It moves beyond simple averages to understand the full *distribution* of outcomes, identifying distinct, recurring operational patterns.
 
 The pipeline is composed of two main components:
 
-1.  **`disteta_aidi` (The Analyzer):** A configurable application that performs a distributional analysis on continuous variables (like travel or dwell times). It uses K-Means clustering to identify distinct operational patterns (behaviors) and characterizes them using High-Density Regions (HDRs).
+1.  **`disteta_batch` (The Analyzer):** A configurable application that performs a distributional analysis on continuous variables (like travel or dwell times). It uses K-Means clustering to identify distinct operational patterns (behaviors) and characterizes them using High-Density Regions (HDRs).
 
 2.  **`report_generator` (The Reporter):** An agnostic reporting engine that automatically finds the latest analysis output, synthesizes all data and plots using an LLM (Google Gemini or a local Ollama model), and generates a polished, self-contained HTML report that explains the findings in natural language.
 
@@ -25,12 +25,12 @@ The pipeline is designed to be modular and configurable, making it ideal for int
 
 ### High-Level Pipeline
 
-The project operates as a two-stage pipeline. First, the `disteta_aidi` application runs a deep analysis and saves the results. Second, the `report_generator` consumes these results to create a narrative report.
+The project operates as a two-stage pipeline. First, the `disteta_batch` application runs a deep analysis and saves the results. Second, the `report_generator` consumes these results to create a narrative report.
 
 ```mermaid
 graph TD
     subgraph "Step 1: Analysis"
-        A[Run src.disteta_aidi.main] --> B["Performs clustering & HDR analysis"];
+        A[Run src.disteta_batch.main] --> B["Performs clustering & HDR analysis"];
         B --> C["Saves plots & JSON results to a unique 'output/run_folder'"];
     end
 
@@ -47,16 +47,16 @@ graph TD
     style D fill:#cde4ff,stroke:#6a8ebf,stroke-width:2px;
 ```
 
-### Detailed Analysis Workflow (`disteta_AIDI.py`)
+### Detailed Analysis Workflow (`disteta_batch.py`)
 
-The `disteta_AIDI.py` application follows a sophisticated, multi-stage process to uncover hidden patterns in your data, as detailed in the workflow below.
+The `disteta_batch.py` application follows a sophisticated, multi-stage process to uncover hidden patterns in your data, as detailed in the workflow below.
 
 ```mermaid
 graph TD
     A[Start main] --> B{"Load Main Config File"};
     B --> C{"Get active_config_names"};
     C --> D{More active configs?};
-    D -- "Yes" --> E["Instantiate DistetaAIDI class"];
+    D -- "Yes" --> E["Instantiate DistetaBatch class"];
     E --> F["Call run_analysis()"];
     
     subgraph "run_analysis() Workflow"
@@ -127,14 +127,14 @@ For each final cluster, the script identifies its High-Density Region. The HDR r
 
 *   **`assets/`**: Contains static resource files like images and audio clips used in documentation.
 *   **`config/`**: Contains all YAML configuration files.
-    *   `config_disteta_AIDI.yaml`: Configures the analysis application.
+    *   `config_disteta.yaml`: Configures the analysis application.
     *   `config_report_generator.yaml`: Configures the reporting application and LLM prompts.
 *   **`data/`**: Directory to store your input data files (e.g., `.csv`, `.parquet`).
 *   **`output/`**: Default directory where all generated run folders are saved. Each run creates a unique subfolder.
 *   **`scripts/`**: Holds small, one-off utility or testing scripts.
 *   **`src/`**: The main source code directory.
     *   `constants.py`: A centralized file for shared, project-wide constants like directory names (`output`, `config`) and other static values used by both the analysis and reporting modules.
-    *   `disteta_aidi/`: The main analysis application package.
+    *   `disteta_batch/`: The main analysis application package.
         *   `main.py`: The entry point script for the analysis.
         *   `utils/`: Helper modules for clustering, data processing, etc.
     *   `report_generator/`: The LLM-based reporting application package.
@@ -162,7 +162,7 @@ To use it, open the notebook in a Jupyter environment (like VS Code or Jupyter L
 
 A command-line script to fetch and list all available Google Gemini models associated with your API key.
 
--   **Purpose**: To help you identify the correct model names to use in the `config_report_generator_AIDI.yaml` configuration file.
+-   **Purpose**: To help you identify the correct model names to use in the `config_report_generator.yaml` configuration file.
 -   **Features**:
     -   Connects to the Google AI API using the `GOOGLE_API_KEY` environment variable.
     -   Prints a detailed list of all available models, including their name, description, token limits, and supported methods.
@@ -210,7 +210,7 @@ The pipeline is a two-step process: first you run the analysis, then you generat
 ### Step 1: Configure and Run the Analysis
 
 1.  **Place your data** in the `data/` directory.
-2.  **Edit `config/config_disteta_AIDI.yaml`:**
+2.  **Edit `config/config_disteta.yaml`:**
     -   Set `active_config_names` to a list of configuration blocks you want to run (e.g., `["truck_data_config", "port_sines_config"]`).
     -   Inside your chosen config block, update `input_data_path` to point to your data file.
     -   Define your `categorical`, `continuous_to_analyze`, and `grouping_column` according to your dataset's schema.
@@ -218,13 +218,13 @@ The pipeline is a two-step process: first you run the analysis, then you generat
 
 3.  **Run the analysis script as a module:**
     ```bash
-    python -m src.disteta_aidi.main
+    python -m src.disteta_batch.main
     ```
     This will create a new timestamped folder inside the `output/` directory containing the analysis results.
 
 ### Step 2: Configure and Generate the Report
 
-1.  **Edit `config/config_report_generator_AIDI.yaml`:**
+1.  **Edit `config/config_report_generator.yaml`:**
     -   Edit `config/config_report_generator.yaml`. Under the `llm` section, set the `provider` to either `"gemini"` or `"ollama"`.
     -   If using Ollama, ensure `ollama_model_name` matches a model you have pulled.
     -   (Optional) Customize the `llm_prompt_template` to change the structure or tone of the report.
@@ -251,7 +251,7 @@ The pipeline is a two-step process: first you run the analysis, then you generat
 
 The behavior of the pipeline is controlled by two YAML files in the `config/` directory.
 
-### `config_disteta_AIDI.yaml`
+### `config_disteta.yaml`
 
 This file configures the main analysis script. You can define multiple analysis blocks (like `truck_data_config`) and choose which one(s) to run by listing them under `active_config_names`.
 
@@ -280,7 +280,7 @@ This file configures the main analysis script. You can define multiple analysis 
     -   A **higher value** results in a **smaller, more exclusive** HDR (e.g., `95.0` finds the top 5% of the densest data).
     -   A **lower value** results in a **larger, more inclusive** HDR (e.g., `50.0` finds the top 50%).
 
-### `config_report_generator_AIDI.yaml`
+### `config_report_generator.yaml`
 
 This file configures the reporting engine.
 
@@ -320,7 +320,7 @@ The `docker-compose.yml` file defines services for each step of the pipeline.
 
 #### Step 1: Run the Analysis
 
-First, run the analysis using the `analyze` profile. This will build the Docker image and run the `disteta_aidi` script. The results will be saved to the `output/` directory on your host machine.
+First, run the analysis using the `analyze` profile. This will build the Docker image and run the `disteta_batch` script. The results will be saved to the `output/` directory on your host machine.
 
 ```bash
 docker-compose --profile analyze up --build

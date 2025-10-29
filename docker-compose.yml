@@ -11,11 +11,11 @@ x-base-environment: &base-environment
   TZ: Europe/Lisbon
 
 services:
-  disteta_aidi:
+  disteta:
     <<: *base-service
-    container_name: disteta_aidi_analyzer
+    container_name: disteta_analyzer
     command: >
-      sh -c "python -m src.disteta_aidi.main"
+      sh -c "python -m src.disteta_batch.main"
     environment:
       <<: *base-environment
     healthcheck:
@@ -28,7 +28,7 @@ services:
 
   report_generator:
     <<: *base-service
-    container_name: disteta_aidi_reporter
+    container_name: disteta_reporter
     command: >
       sh -c "python -m src.report_generator.main --host 0.0.0.0"
     ports:
@@ -43,7 +43,7 @@ services:
 
   ollama:
     image: busybox:latest
-    container_name: disteta_aidi_ollama_proxy
+    container_name: disteta_ollama_proxy
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command: "sleep infinity"
@@ -52,7 +52,7 @@ services:
 
   analyzer_and_reporter:
     <<: *base-service
-    container_name: disteta_aidi_analyzer_reporter
+    container_name: disteta_analyzer_reporter
     command: >
       sh -c "python -m src.report_generator.main --run-analysis --host 0.0.0.0"
     ports:
@@ -69,7 +69,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: test
-    container_name: disteta_aidi_tester
+    container_name: disteta_tester
     command: "pytest"
     profiles:
       - test

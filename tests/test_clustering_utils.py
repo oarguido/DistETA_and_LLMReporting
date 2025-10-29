@@ -2,8 +2,8 @@ import pytest
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
-from src.disteta_aidi.utils.clustering_utils import perform_clustering, calculate_wcss_and_silhouette, filter_silhouette_scores, find_optimal_k_values, perform_clustering_and_aggregation, calculate_hdr_for_cluster
-from src.disteta_aidi.utils.constants import CLUSTER_COL, QUANT_PREFIX
+from src.disteta_batch.utils.clustering_utils import perform_clustering, calculate_wcss_and_silhouette, filter_silhouette_scores, find_optimal_k_values, perform_clustering_and_aggregation, calculate_hdr_for_cluster
+from src.disteta_batch.utils.constants import CLUSTER_COL, QUANT_PREFIX
 
 
 def test_perform_clustering():
