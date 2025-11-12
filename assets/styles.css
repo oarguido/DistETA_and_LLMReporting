@@ -1,3 +1,9 @@
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
 :root {
     --color-bg: #f9fafb;
     --color-surface: #ffffff;
@@ -75,6 +81,7 @@ a {
     color: var(--color-link);
     text-decoration: none;
     font-weight: 500;
+    transition: color 0.2s ease-in-out;
 }
 
 a:hover {
@@ -172,4 +179,41 @@ iframe {
     border-top-left-radius: 0;
     border-top-right-radius: 0;
     margin-top: 0;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --color-bg: #111827;
+        --color-surface: #1f2937;
+        --color-text: #d1d5db;
+        --color-heading: #f9fafb;
+        --color-border: #374151;
+        --color-border-strong: #4b5563;
+        --color-link: #60a5fa;
+        --color-link-hover: #93c5fd;
+        --color-code-bg: #0d1117;
+        --color-code-text: #e5e7eb;
+        --color-code-border: #4b5563;
+        --color-inline-code-bg: #374151;
+        --color-inline-code-text: #f9fafb;
+    }
+
+    th {
+        background-color: #374151; /* Darker header for tables in dark mode */
+    }
+}
+
+@media (max-width: 768px) {
+    .report-content-wrapper {
+        margin: 2rem auto;
+        padding: 2rem 1.5rem;
+    }
+
+    h1 {
+        font-size: 2rem;
+    }
+
+    h2 {
+        font-size: 1.75rem;
+    }
 }
