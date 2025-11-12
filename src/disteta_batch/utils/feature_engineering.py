@@ -1,10 +1,17 @@
-# This module provides functions for feature engineering, including categorical
-# encoding, data quantization, and aggregation, which are essential steps in
-# preparing the data for distributional analysis.
+"""
+This module provides functions for feature engineering, including categorical encoding, data quantization, and aggregation.
+
+These steps are essential for transforming raw data into a format suitable for
+distributional analysis and clustering. Key functionalities include:
+- One-hot encoding of categorical features.
+- Calculating optimal bin sizes for continuous data.
+- Quantizing continuous data into discrete bins.
+- Aggregating feature profiles for clustering.
+"""
 
 import logging
 import re
-from typing import List, Optional, Sequence, Tuple, cast
+from typing import Dict, List, Optional, Sequence, Tuple, Union, cast
 
 import numpy as np
 import pandas as pd
@@ -22,26 +29,26 @@ def encode_categorical_features(
     continuous_columns: Optional[List[str]] = None,
 ) -> pd.DataFrame:
     """
-    Encodes specified categorical columns using one-hot encoding.
+    Encodes specified categorical columns using one-hot encoding (dummies).
 
-    This function takes a DataFrame, applies pandas.get_dummies to the specified
-    categorical columns, and returns a new DataFrame with the original continuous
-    and grouping columns preserved alongside the new encoded columns.
+    Preserves specified continuous and grouping columns while transforming the
+    categorical ones.
 
     Args:
         df: The input DataFrame.
         categorical_columns: A list of column names to be one-hot encoded.
-        grouping_column: An optional column name to preserve at the start of the output.
+        grouping_column: An optional column name to preserve at the start.
         continuous_columns: A list of continuous columns to preserve.
 
     Returns:
-        A new DataFrame with categorical columns encoded.
+        A new DataFrame with categorical columns encoded and columns reordered.
     """
     df_to_encode = df.copy()
     continuous_columns = continuous_columns or []
     valid_categorical = [
         col for col in categorical_columns if col in df_to_encode.columns
     ]
+
     if not valid_categorical:
         logger.warning("No valid categorical columns found for encoding.")
         cols_to_keep = [
@@ -49,12 +56,12 @@ def encode_categorical_features(
             for col in ([grouping_column] + continuous_columns)
             if col and col in df.columns
         ]
-        result_df = (
-            df_to_encode[cols_to_keep].copy() if cols_to_keep else pd.DataFrame()
-        )
-        return cast(pd.DataFrame, result_df)
+        return cast(pd.DataFrame, df_to_encode[cols_to_keep].copy()) if cols_to_keep else pd.DataFrame()
+
     encoded_df = pd.get_dummies(df_to_encode, columns=valid_categorical, dtype=float)
-    final_order = []
+
+    # Reorder columns for consistency
+    final_order: List[str] = []
     if grouping_column and grouping_column in encoded_df.columns:
         final_order.append(grouping_column)
     final_order.extend([col for col in continuous_columns if col in encoded_df.columns])
@@ -62,6 +69,7 @@ def encode_categorical_features(
     final_order.extend(
         sorted([col for col in encoded_df.columns if col.startswith(cat_prefixes)])
     )
+
     return cast(pd.DataFrame, encoded_df[list(dict.fromkeys(final_order))])
 
 
@@ -70,9 +78,6 @@ def get_encoded_column_names(
 ) -> List[str]:
     """
     Retrieves the names of columns created by one-hot encoding.
-
-    Given a DataFrame and the original list of categorical columns, this function
-    identifies and returns the names of the dummified columns based on their prefixes.
 
     Args:
         df: The DataFrame containing the encoded columns.
@@ -84,22 +89,21 @@ def get_encoded_column_names(
     if not original_categorical_columns:
         return []
     prefixes = tuple(f"{col}_" for col in original_categorical_columns)
-    encoded_columns = [col for col in df.columns if col.startswith(prefixes)]
-    return sorted(encoded_columns)
+    return sorted([col for col in df.columns if col.startswith(prefixes)])
 
 
 def generate_label(
-    row: pd.Series, combination_columns: List[str], label_mapping_dict: dict
+    row: pd.Series, combination_columns: List[str], label_mapping_dict: Dict[Tuple, int]
 ) -> int:
-    """Generates a unique integer label for each distinct row-wise combination of values.
+    """
+    Generates a unique integer label for a distinct row-wise combination of values.
 
-    This function is used to create a single identifier ('comb') for each unique
-    categorical profile in the data, using a memoization dictionary for efficiency.
+    Uses a memoization dictionary for efficiency.
 
     Args:
         row: A row of a DataFrame (as a pandas Series).
         combination_columns: The list of columns that define a unique combination.
-        label_mapping_dict: A dictionary used for memoization to store and retrieve labels.
+        label_mapping_dict: A dictionary for memoization to store and retrieve labels.
 
     Returns:
         An integer label for the combination.
@@ -111,22 +115,22 @@ def generate_label(
 
 
 def calculate_combination_threshold(
-    df: pd.DataFrame, threshold_config: str | int
+    df: pd.DataFrame, threshold_config: Union[str, int]
 ) -> int:
     """
-    Calculates the minimum size threshold for feature combinations.
+    Calculates the minimum size threshold for feature combinations to be included.
 
-    This function determines the minimum number of occurrences a combination must have
-    to be included in the analysis. It supports several methods specified via a
-    configuration string: a direct integer, a percentile (e.g., 'p20'), or an
-    automatic knee-point detection ('auto-knee').
+    Supports several methods:
+    - A direct integer.
+    - A percentile (e.g., 'p20').
+    - Automatic knee-point detection ('auto-knee').
 
     Args:
         df: The DataFrame containing the 'comb' column.
         threshold_config: The configuration string or integer for the threshold.
 
     Returns:
-        The calculated integer threshold.
+        The calculated integer threshold (minimum of 2).
     """
     if isinstance(threshold_config, int):
         logger.info(
@@ -145,9 +149,9 @@ def calculate_combination_threshold(
         logger.warning("No combinations found. Defaulting to a threshold of 2.")
         return 2
 
-    if threshold_config.lower().startswith("p"):
+    if str(threshold_config).lower().startswith("p"):
         try:
-            percentile_value = int(threshold_config[1:])
+            percentile_value = int(str(threshold_config)[1:])
             if not (0 <= percentile_value <= 100):
                 raise ValueError("Percentile must be between 0 and 100.")
 
@@ -159,12 +163,12 @@ def calculate_combination_threshold(
             return final_threshold
         except (ValueError, TypeError) as e:
             raise ValueError(
-                f"Invalid percentile format: '{threshold_config}'. Use 'pXX' (e.g., 'p20')."
+                f"Invalid percentile format: '{threshold_config}'. Use 'pXX'."
             ) from e
 
-    elif threshold_config.lower().startswith("auto-knee"):
+    elif str(threshold_config).lower().startswith("auto-knee"):
         sensitivity = 1.0
-        match = re.search(r"S=([\d.]+)", threshold_config, re.IGNORECASE)
+        match = re.search(r"S=([\d.]+)", str(threshold_config), re.IGNORECASE)
         if match:
             try:
                 sensitivity = float(match.group(1))
@@ -212,25 +216,29 @@ def calculate_optimal_bins(data: pd.Series) -> int:
     Calculates the optimal number of bins for a histogram using the Freedman-Diaconis rule.
 
     This method is robust to outliers and adapts to the data's size and
-    interquartile range to determine a suitable bin count for quantization.
+    interquartile range.
 
     Args:
         data: A pandas Series of numeric data.
 
     Returns:
-        The calculated optimal number of bins as an integer.
+        The calculated optimal number of bins.
     """
     data = data.dropna()
     n = len(data)
     if n < 2:
         return 1
+
     q75, q25 = np.percentile(data, [75, 25])
     iqr = q75 - q25
+
     if iqr > 0:
         bin_width = 2 * iqr / (n ** (1 / 3))
         if bin_width > 0:
             num_bins = (data.max() - data.min()) / bin_width
             return int(np.ceil(num_bins))
+
+    # Fallback for data with no IQR (e.g., all same values)
     num_bins = 1 + np.log2(n)
     return int(np.ceil(num_bins))
 
@@ -239,14 +247,10 @@ def quantize_and_dummify(
     df: pd.DataFrame,
     column_name: str,
     n_classes: int,
-    labels: Sequence[int] | Sequence[str],
+    labels: Union[Sequence[int], Sequence[str]],
 ) -> Tuple[pd.DataFrame, np.ndarray]:
     """
-    Quantizes a continuous column into discrete bins and then creates dummy variables.
-
-    This function first uses pandas.cut to discretize a numeric column and then
-    applies one-hot encoding to the resulting bins, preparing the data for
-    distributional analysis.
+    Quantizes a continuous column and then creates dummy variables from the bins.
 
     Args:
         df: The input DataFrame.
@@ -255,8 +259,9 @@ def quantize_and_dummify(
         labels: The labels for the bins.
 
     Returns:
-        A tuple containing the processed DataFrame with new dummy columns and an
-        array of the calculated bin edges.
+        A tuple containing:
+        - The processed DataFrame with new dummy columns.
+        - A numpy array of the calculated bin edges.
     """
     if column_name not in df.columns:
         raise ValueError(f"Column '{column_name}' not found.")
@@ -268,6 +273,7 @@ def quantize_and_dummify(
         raise ValueError(
             f"Labels length ({len(labels)}) must match n_classes ({n_classes})."
         )
+
     df_processed = df.copy()
     try:
         df_processed[CLASS_COL], actual_bin_edges = pd.cut(
@@ -282,6 +288,7 @@ def quantize_and_dummify(
     except Exception as e:
         logger.error(f"Error during pd.cut for column '{column_name}': {e}")
         raise
+
     try:
         dummies = pd.get_dummies(
             df_processed[CLASS_COL],
@@ -296,32 +303,35 @@ def quantize_and_dummify(
             f"Error during pd.get_dummies for '{CLASS_COL}' (from '{column_name}'): {e}"
         )
         raise
+
     return df_processed, cast(np.ndarray, actual_bin_edges)
 
 
 def aggregate_by_comb(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Aggregates the dummified quantized features by the combination label.
+    Aggregates dummified quantized features by the combination label ('comb').
 
-    This function groups the DataFrame by the 'comb' column and sums the values
-    of the quantized feature columns (prefixed with 'c_'), creating a single
+    This groups the DataFrame by 'comb' and sums the values of the quantized
+    feature columns (prefixed with 'c_'), creating a single distributional
     profile for each unique combination.
 
     Args:
-        df: The DataFrame containing 'comb' and dummified 'c_*' columns.
+        df: DataFrame containing 'comb' and dummified 'c_*' columns.
 
     Returns:
-        An aggregated DataFrame where each row represents a unique combination profile.
+        An aggregated DataFrame where each row is a unique combination profile.
     """
     if COMB_COL not in df.columns:
         logger.error(f"'{COMB_COL}' column not found for aggregation.")
         return pd.DataFrame()
+
     numeric_cols = df.select_dtypes(include=np.number).columns
     combination_cols = [col for col in numeric_cols if col.startswith(QUANT_PREFIX)]
+
     if not combination_cols:
         logger.warning(f"No numeric '{QUANT_PREFIX}*' columns found for aggregation.")
-        result_df = df[[COMB_COL]].drop_duplicates().reset_index(drop=True)
-        return cast(pd.DataFrame, result_df)
+        return df[[COMB_COL]].drop_duplicates().reset_index(drop=True)  # type: ignore
+
     try:
         df_aggregated = (
             df.groupby(COMB_COL, observed=True)[combination_cols].sum().reset_index()

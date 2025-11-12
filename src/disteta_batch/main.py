@@ -1,37 +1,38 @@
 """
-This module, part of the DistETA project, is the core analysis pipeline.
+This module is the core of the DistETA batch analysis pipeline.
 
 It defines the `DistetaBatch` class, which orchestrates a configurable workflow
 for analyzing distributional data. The key responsibilities of this module are:
 
-1.  **Data Loading and Preparation**: Ingests data and prepares it for analysis.
-2.  **Data Segmentation**: Groups data into meaningful segments for targeted analysis.
+1.  **Data Loading and Preparation**: Ingests and prepares data for analysis.
+2.  **Data Segmentation**: Groups data into meaningful segments.
 3.  **Quantization and Clustering**: Discretizes continuous features and uses
     K-Means clustering to identify dominant distributional patterns.
 4.  **Artifact Generation**: Produces a comprehensive set of outputs, including
-    processed data, JSON summaries, and visualizations.
+    processed data, JSON summaries, visualizations, and trained models.
 
 The analysis is driven by a central YAML configuration file, allowing for
 flexible and repeatable execution. The main entry point is the `run_all_analyses`
 function, which can be called from other scripts or executed directly.
 
 Execution:
-    To run the analysis, execute this module as a script:
+    To run the analysis for all active configurations:
     $ python -m src.disteta_batch.main
 """
 
-# =============================================================================
-# HEADER (Imports, Constants, Logger)
-# =============================================================================
+import copy
 import json
 import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Union, cast
+from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 import numpy as np
 import pandas as pd
+import xgboost as xgb
+from sklearn.metrics import accuracy_score, classification_report, roc_auc_score
+from sklearn.preprocessing import LabelEncoder
 
 from .. import constants
 from .utils.clustering_utils import (
@@ -44,28 +45,17 @@ from .utils.clustering_utils import (
 from .utils.constants import (
     AGG_DF_PREFIX,
     ALL_DATA_GROUP_KEY,
-    CFG_CLUSTERING_MAX_K,
-    CFG_CLUSTERING_MIN_K,
-    CFG_COLS_CATEGORICAL,
-    CFG_COLS_CONTINUOUS,
-    CFG_COLS_GROUPING,
-    CFG_COLS_UNITS,
-    CFG_FILTERING_VALUES,
-    CFG_HDR_THRESHOLD,
-    CFG_IO_INPUT_DATA_PATH,
-    CFG_MAPPING_COLUMN,
-    CFG_MAPPING_VALUE,
-    CFG_PLOTTING_QUANT_LABEL,
-    CFG_PLOTTING_X_LABEL,
-    CFG_PREPROC_MIN_COMB_SIZE,
-    CFG_PREPROC_N_CLASSES,
-    CFG_PREPROC_SILHOUETTE_DROP,
     CLUSTER_COL,
     COMB_COL,
     NAN_GROUP_KEY,
     QUANT_PREFIX,
 )
-from .utils.data_utils import identify_numeric_columns, load_config, load_data
+from .utils.data_utils import (
+    _default_json_converter,
+    identify_numeric_columns,
+    load_config,
+    load_data,
+)
 from .utils.feature_engineering import (
     aggregate_by_comb,
     calculate_combination_threshold,
@@ -82,125 +72,174 @@ from .utils.plotting import (
 
 # --- Constants ---
 DEFAULT_CONFIG_PATH = os.path.join(
-    constants.CONFIG_DIR, constants.DISTETA_CONFIG_FILENAME
+    constants.PROJECT_ROOT, constants.CONFIG_DIR, constants.DISTETA_CONFIG_FILENAME
 )
 
 # --- Logger Setup ---
 logger = logging.getLogger(__name__)
-# Silence noisy third-party loggers
 logging.getLogger("kaleido").setLevel(logging.WARNING)
 logging.getLogger("shutil").setLevel(logging.WARNING)
 logging.getLogger("choreographer").setLevel(logging.WARNING)
 
 
 # =============================================================================
-# CONFIGURATION MODEL (The AnalysisSettings dataclass)
+# CONFIGURATION DATA MODELS
 # =============================================================================
-@dataclass(frozen=True)
-class AnalysisSettings:
-    """Holds all configuration parameters for a single analysis run."""
+@dataclass
+class IOOptions:
+    """Specifies input/output paths for an analysis."""
 
-    # Required from config
-    input_path_resolved: str
-    min_comb_size_input: Union[str, int]
-    n_classes_input: Union[str, int]
-    percent_drop_threshold_input: Union[int, float]
+    input_data_path: str = "data/truck_arrival_data.csv"
 
-    # Optional with defaults
-    categorical_cols: List[str] = field(default_factory=list)
-    continuous_cols_config: List[str] = field(default_factory=list)
-    grouping_col_config: Optional[str] = None
-    filter_values_config: List[str] = field(default_factory=list)
-    value_mapping: Dict = field(default_factory=dict)
-    column_name_mapping: Dict = field(default_factory=dict)
-    continuous_units_map: Dict = field(default_factory=dict)
-    x_axis_label_config: str = "Value"
-    quantized_axis_label_config: str = "Quantized Bin"
-    hdr_threshold_percentage_config: float = 90.0
+    @property
+    def input_path_resolved(self) -> str:
+        """Returns the absolute path to the input data file."""
+        return os.path.join(constants.PROJECT_ROOT, self.input_data_path)
+
+
+@dataclass
+class ColumnConfig:
+    """Defines all column-related configurations for an analysis."""
+
+    grouping_column: Optional[str] = None
+    filter_values: List[str] = field(default_factory=list)
+    categorical: List[str] = field(default_factory=list)
+    continuous_to_analyze: List[str] = field(default_factory=list)
+    continuous_units_map: Dict[str, str] = field(default_factory=dict)
+    value_mapping: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    column_name_mapping: Dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class PreprocessingOptions:
+    """Defines parameters for the data preprocessing stage."""
+
+    min_combination_size_input: Union[str, int] = "auto-knee"
+    quantization_n_classes_input: Union[str, int] = "auto"
+
+
+@dataclass
+class ClusteringOptions:
+    """Defines parameters for the clustering analysis stage."""
+
     clustering_min_k: int = 2
     clustering_max_k: int = 10
+    percent_drop_threshold_input: float = 5.0
+
+
+@dataclass
+class HDROptions:
+    """Defines parameters for High-Density Region (HDR) analysis."""
+
+    hdr_threshold_percentage: float = 90.0
+
+
+@dataclass
+class VisualizationOptions:
+    """Defines parameters for plot visualization."""
+
+    x_axis_label: str = "Value"
+    quantized_axis_label: str = "Bin"
+
+
+@dataclass
+class AnalysisSettings:
+    """A typed dataclass that aggregates all settings for a single analysis run."""
+
+    io_options: IOOptions
+    column_config: ColumnConfig
+    preprocessing_options: PreprocessingOptions
+    clustering_options: ClusteringOptions
+    hdr_options: HDROptions
+    visualization_options: VisualizationOptions
 
     @classmethod
-    def from_dict(cls, config: dict) -> "AnalysisSettings":
-        """Factory method to create an instance from a config dictionary."""
-        CONFIG_PARAMS_MAP = {
-            # attribute_name: (config_path, default_value, is_required)
-            "input_path_resolved": (CFG_IO_INPUT_DATA_PATH, None, True),
-            "categorical_cols": (CFG_COLS_CATEGORICAL, [], False),
-            "continuous_cols_config": (CFG_COLS_CONTINUOUS, [], False),
-            "grouping_col_config": (CFG_COLS_GROUPING, None, False),
-            "filter_values_config": (CFG_FILTERING_VALUES, [], False),
-            "min_comb_size_input": (CFG_PREPROC_MIN_COMB_SIZE, None, True),
-            "n_classes_input": (CFG_PREPROC_N_CLASSES, None, True),
-            "percent_drop_threshold_input": (CFG_PREPROC_SILHOUETTE_DROP, None, True),
-            "value_mapping": (CFG_MAPPING_VALUE, {}, False),
-            "column_name_mapping": (CFG_MAPPING_COLUMN, {}, False),
-            "continuous_units_map": (CFG_COLS_UNITS, {}, False),
-            "x_axis_label_config": (CFG_PLOTTING_X_LABEL, "Value", False),
-            "quantized_axis_label_config": (
-                CFG_PLOTTING_QUANT_LABEL,
-                "Quantized Bin",
-                False,
+    def from_dict(cls, config: Dict[str, Any]) -> "AnalysisSettings":
+        """Factory method to create an AnalysisSettings instance from a dictionary."""
+        return cls(
+            io_options=IOOptions(**config.get("io", {})),
+            column_config=ColumnConfig(**config.get("columns", {})),
+            preprocessing_options=PreprocessingOptions(
+                **config.get("preprocessing", {})
             ),
-            "hdr_threshold_percentage_config": (CFG_HDR_THRESHOLD, 90.0, False),
-            "clustering_min_k": (CFG_CLUSTERING_MIN_K, 2, False),
-            "clustering_max_k": (CFG_CLUSTERING_MAX_K, 10, False),
-        }
+            clustering_options=ClusteringOptions(**config.get("clustering", {})),
+            hdr_options=HDROptions(**config.get("hdr_analysis", {})),
+            visualization_options=VisualizationOptions(
+                **config.get("visualization", {})
+            ),
+        )
 
-        def get_cfg(path, default=None):
-            keys = path.split(".")
-            val = config
-            for key in keys:
-                if not isinstance(val, dict):
-                    return default
-                val = val.get(key)
-                if val is None:
-                    return default
-            return val
+    # --- Convenience Properties for direct access to nested settings ---
+    @property
+    def input_path_resolved(self) -> str:
+        return self.io_options.input_path_resolved
 
-        kwargs = {}
-        for attr, (path, default, required) in CONFIG_PARAMS_MAP.items():
-            value = get_cfg(path, default)
-            if required and value is None:
-                raise ValueError(f"'{path}' is a required configuration key.")
-            # We only pass non-None values to the constructor to allow dataclass defaults to work
-            if value is not None:
-                kwargs[attr] = value
+    @property
+    def grouping_col_config(self) -> Optional[str]:
+        return self.column_config.grouping_column
 
-        return cls(**kwargs)
+    @property
+    def filter_values_config(self) -> List[str]:
+        return self.column_config.filter_values
+
+    @property
+    def categorical_cols(self) -> List[str]:
+        return self.column_config.categorical
+
+    @property
+    def continuous_cols_config(self) -> List[str]:
+        return self.column_config.continuous_to_analyze
+
+    @property
+    def continuous_units_map(self) -> Dict[str, str]:
+        return self.column_config.continuous_units_map
+
+    @property
+    def value_mapping(self) -> Dict[str, Dict[str, str]]:
+        return self.column_config.value_mapping
+
+    @property
+    def column_name_mapping(self) -> Dict[str, str]:
+        return self.column_config.column_name_mapping
+
+    @property
+    def min_comb_size_input(self) -> Union[str, int]:
+        return self.preprocessing_options.min_combination_size_input
+
+    @property
+    def n_classes_input(self) -> Union[str, int]:
+        return self.preprocessing_options.quantization_n_classes_input
+
+    @property
+    def clustering_min_k(self) -> int:
+        return self.clustering_options.clustering_min_k
+
+    @property
+    def clustering_max_k(self) -> int:
+        return self.clustering_options.clustering_max_k
+
+    @property
+    def percent_drop_threshold_input(self) -> float:
+        return self.clustering_options.percent_drop_threshold_input
+
+    @property
+    def hdr_threshold_percentage_config(self) -> float:
+        return self.hdr_options.hdr_threshold_percentage
+
+    @property
+    def x_axis_label_config(self) -> str:
+        return self.visualization_options.x_axis_label
+
+    @property
+    def quantized_axis_label_config(self) -> str:
+        return self.visualization_options.quantized_axis_label
 
 
 # =============================================================================
-# MAIN ANALYSIS CLASS (The DistetaBatch class)
+# MAIN ANALYSIS CLASS
 # =============================================================================
 class DistetaBatch:
-    """Orchestrates the DistETA (Distributional ETA) analysis pipeline.
-
-    This class is the core of the analysis, executing a configurable workflow:
-    1.  **Data Loading & Preparation**: Ingests data, identifies column types,
-        and encodes categorical features.
-    2.  **Data Segmentation**: Groups data for targeted analysis based on a
-        specified column and filters.
-    3.  **Quantization**: Discretizes continuous features into bins.
-    4.  **Clustering**: Applies K-Means to find dominant distributional patterns,
-        automatically determining the optimal number of clusters (K).
-    5.  **High-Density Region (HDR) Calculation**: Summarizes each cluster's
-        distribution by calculating its high-density region.
-    6.  **Artifact Generation**: Produces a comprehensive set of outputs,
-        including timestamped directories, processed data (CSVs), detailed
-        JSON summaries, and interactive/static plots (HTML/PNG).
-
-    The process is driven by a YAML configuration for flexibility and
-    repeatability.
-
-    Attributes:
-        settings: An `AnalysisSettings` object with all run parameters.
-        run_config_name: The name of the configuration block being executed.
-        base_output_path: The root directory for all output folders.
-        logger: The logger instance for this class.
-        run_timestamp: The timestamp string for the current run.
-        generated_figures: A list to store generated Plotly figures before saving.
-    """
+    """Orchestrates the entire DistETA (Distributional ETA) analysis pipeline."""
 
     def __init__(
         self,
@@ -213,18 +252,83 @@ class DistetaBatch:
         self.base_output_path = base_output_path
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         self.run_timestamp = time.strftime("%Y%m%d_%H%M%S")
-        self.generated_figures = []
+        self.generated_figures: List[Tuple[Any, str]] = []
+
+    def run_analysis(self):
+        """Main entry point to execute the full analysis pipeline for the given settings."""
+        self._setup_output_directories()
+        log_filepath = os.path.join(
+            self.logs_output_path, f"analysis_log_{self.run_config_name}.log"
+        )
+        done_filepath = os.path.join(constants.OUTPUT_DIR, ".analysis_done")
+
+        if os.path.exists(done_filepath):
+            os.remove(done_filepath)
+
+        file_handler = logging.FileHandler(log_filepath, encoding="utf-8")
+        formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
+        file_handler.setFormatter(formatter)
+        root_logger = logging.getLogger()
+        root_logger.addHandler(file_handler)
+        self.logger.info(f"Logging for this run is being saved to: {log_filepath}")
+
+        try:
+            start_time = time.time()
+            self.logger.info(
+                f"--- Starting DistetaBatch Analysis for config '{self.run_config_name}' ---"
+            )
+
+            df_filtered, continuous_cols = self._prepare_data()
+            aggregated_dfs, quantization_params, dummified_dfs = (
+                self._quantize_and_aggregate_segments(df_filtered, continuous_cols)
+            )
+            optimal_k_values, all_silh_scores = self._find_and_plot_optimal_k(
+                aggregated_dfs, continuous_cols
+            )
+            final_cluster_profiles, hdr_results, cluster_mappings = (
+                self._perform_final_clustering_and_hdr(
+                    aggregated_dfs,
+                    optimal_k_values,
+                    df_filtered,
+                    continuous_cols,
+                    quantization_params,
+                )
+            )
+            self._train_and_save_classifiers(
+                dummified_dfs, cluster_mappings, optimal_k_values, quantization_params
+            )
+            self._plot_final_cluster_distributions(
+                final_cluster_profiles,
+                continuous_cols,
+                quantization_params,
+                hdr_results,
+            )
+            self._save_json_artifacts(
+                continuous_cols,
+                optimal_k_values,
+                all_silh_scores,
+                final_cluster_profiles,
+                hdr_results,
+                quantization_params,
+            )
+            self._save_all_generated_figures()
+
+            end_time = time.time()
+            self.logger.info(
+                f"\nAnalysis for config '{self.run_config_name}' complete. Total time: {end_time - start_time:.2f}s."
+            )
+
+            with open(done_filepath, "w") as f:
+                f.write(self.run_specific_output_dir)
+
+        finally:
+            logging.getLogger().removeHandler(file_handler)
+            file_handler.close()
 
     def _setup_output_directories(self):
-        """
-        Creates the unique, timestamped directory structure for the current run.
-
-        The structure is:
-        <base_output_path>/<timestamp>_run_<config_name>/
-            - data/
-            - graphics/
-            - logs/
-        """
+        """Creates the directory structure for all analysis outputs."""
         run_folder_name = f"{self.run_timestamp}_run_{self.run_config_name}"
         self.run_specific_output_dir = os.path.join(
             self.base_output_path, run_folder_name
@@ -242,64 +346,33 @@ class DistetaBatch:
         os.makedirs(self.graphics_output_path, exist_ok=True)
         os.makedirs(self.logs_output_path, exist_ok=True)
         self.logger.info(
-            f"Outputs for run '{self.run_config_name}' will be saved to: "
-            f"{self.run_specific_output_dir}"
+            f"Outputs for run '{self.run_config_name}' will be saved to: {self.run_specific_output_dir}"
         )
 
     def _get_groups_to_process(self, df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
-        """
-        Segments a DataFrame into groups based on the grouping column and filter values.
-
-        This method first groups the DataFrame by the `grouping_col_config`.
-        If `filter_values_config` is provided, only the specified groups are
-        processed. It handles NaN values in the grouping column as a separate
-        group, which can be targeted using the key 'NaN'. If no grouping column
-        is specified, it returns a single group containing the entire DataFrame.
-
-        Args:
-            df (pd.DataFrame): The DataFrame to be segmented.
-
-        Returns:
-            Dict[str, pd.DataFrame]: A dictionary where keys are group names and
-                                     values are the corresponding DataFrame segments.
-        """
+        """Segments the DataFrame into groups based on the configuration."""
         grouping_col = self.settings.grouping_col_config
-
         if not grouping_col or grouping_col not in df.columns:
             return {ALL_DATA_GROUP_KEY: df.copy()}
 
-        # Group by the specified column, including NaN values as a separate group
         grouped = df.groupby(grouping_col, dropna=False)
-
-        # Get the names of all available groups from the groupby object
-        available_group_keys = list(grouped.groups.keys())
-
         filter_list = self.settings.filter_values_config
-
-        target_group_keys = []
-        if not filter_list:
-            # If no filter is specified, process all groups
-            target_group_keys = available_group_keys
-        else:
-            # If a filter is specified, select only the groups present in the filter list.
-            # The filter list uses the string "NaN" to represent null values.
-            for key in available_group_keys:
-                # The key from groupby for the NaN group is np.nan.
-                # Use np.isnan for explicit NaN check on scalar floats, combined
-                # with isinstance for type safety.
-                if isinstance(key, float) and np.isnan(key):
-                    if NAN_GROUP_KEY in filter_list:
-                        target_group_keys.append(key)
-                elif key in filter_list:
-                    target_group_keys.append(key)
+        target_group_keys = [
+            key
+            for key in grouped.groups.keys()
+            if not filter_list
+            or (
+                isinstance(key, float)
+                and np.isnan(key)
+                and NAN_GROUP_KEY in filter_list
+            )
+            or (key in filter_list)
+        ]
 
         groups_to_process = {}
         for key in target_group_keys:
             group_df = grouped.get_group(key)
             if not group_df.empty:
-                # Use NAN_GROUP_KEY for the dictionary key if the group key is NaN.
-                # Use np.isnan for explicit NaN check on scalar floats, combined
-                # with isinstance for type safety.
                 dict_key = (
                     NAN_GROUP_KEY
                     if isinstance(key, float) and np.isnan(key)
@@ -309,24 +382,7 @@ class DistetaBatch:
         return groups_to_process
 
     def _prepare_data(self) -> Tuple[pd.DataFrame, List[str]]:
-        """
-        Loads, prepares, and filters the initial DataFrame for analysis.
-
-        This method performs several key steps:
-        1.  Loads the data from the path specified in the settings.
-        2.  Identifies the continuous columns to be analyzed.
-        3.  Generates and saves initial distribution plots for these columns.
-        4.  Encodes categorical features into a numerical format.
-        5.  Creates a 'combination' column based on the encoded categorical features.
-        6.  Filters the DataFrame to remove combinations with fewer members than
-            the `min_comb_size_input` threshold.
-        7.  Saves the filtered, pre-quantization DataFrame.
-
-        Returns:
-            Tuple[pd.DataFrame, List[str]]: A tuple containing the prepared
-                                             DataFrame and the list of
-                                             continuous columns to be analyzed.
-        """
+        """Loads, preprocesses, and filters the main dataset."""
         df = load_data(self.settings.input_path_resolved)
         continuous_cols = (
             self.settings.continuous_cols_config
@@ -348,14 +404,16 @@ class DistetaBatch:
             expanded_df, self.settings.categorical_cols
         )
 
-        if encoded_col_list:
-            # Vectorized approach to create combination labels, much faster than df.apply
-            comb_series = (
-                expanded_df[encoded_col_list].astype(str).agg("-".join, axis=1)
+        expanded_df[COMB_COL] = (
+            (
+                pd.factorize(
+                    expanded_df[encoded_col_list].astype(str).agg("- ".join, axis=1)
+                )[0]
+                + 1
             )
-            expanded_df[COMB_COL] = pd.factorize(comb_series)[0] + 1
-        else:
-            expanded_df[COMB_COL] = 1
+            if encoded_col_list
+            else 1
+        )
 
         if COMB_COL in expanded_df.columns:
             self.logger.info("--- Analyzing Combination Size Distribution ---")
@@ -368,7 +426,6 @@ class DistetaBatch:
         min_size_threshold = calculate_combination_threshold(
             expanded_df, self.settings.min_comb_size_input
         )
-
         expanded_df_filtered = expanded_df[
             expanded_df.groupby(COMB_COL)[COMB_COL].transform("size")
             >= min_size_threshold
@@ -379,54 +436,27 @@ class DistetaBatch:
                 f"No data meets the minimum combination size threshold of {min_size_threshold}."
             )
 
-        retained_rows = len(expanded_df_filtered)
-        total_rows = len(expanded_df)
+        retained_rows, total_rows = len(expanded_df_filtered), len(expanded_df)
         percent_retained = (retained_rows / total_rows * 100) if total_rows > 0 else 0
         self.logger.info(
-            f"Filtering by min combination size of {min_size_threshold} "
-            f"retained {retained_rows:,} of {total_rows:,} rows "
-            f"({percent_retained:.2f}%)."
+            f"Filtering by min combination size of {min_size_threshold} retained {retained_rows:,} of {total_rows:,} rows ({percent_retained:.2f}%)."
         )
 
         self._save_dataframe(
             cast(pd.DataFrame, expanded_df_filtered),
             "01_filtered_pre_quantization_data",
         )
-
         return cast(pd.DataFrame, expanded_df_filtered), continuous_cols
 
     def _quantize_and_aggregate_segments(
-        self,
-        df: pd.DataFrame,
-        continuous_cols: List[str],  # noqa: E501
-    ) -> Tuple[Dict, Dict]:
-        """
-        Quantizes continuous features and aggregates data for each segment.
-
-        For each data group and each continuous feature, this method:
-        1.  Determines the optimal number of bins for quantization (or uses the
-            configured value).
-        2.  Discretizes the continuous feature into these bins (quantization).
-        3.  Dummifies the quantized feature, creating a one-hot encoded representation.
-        4.  Aggregates the dummified data by the 'combination' column, creating
-            a profile of distributions for each combination.
-        5.  Stores the aggregated DataFrames and the quantization parameters
-            (bin edges, units) for later use.
-
-        Args:
-            df (pd.DataFrame): The filtered DataFrame from the preparation step.
-            continuous_cols (List[str]): The list of continuous columns to process.
-
-        Returns:
-            Tuple[Dict, Dict]: A tuple containing:
-                               - A dictionary of aggregated DataFrames for each segment.
-                               - A dictionary of quantization parameters for each segment.
-        """
+        self, df: pd.DataFrame, continuous_cols: List[str]
+    ) -> Tuple[Dict, Dict, Dict]:
+        """Quantizes continuous features and aggregates them for each data segment."""
         groups_to_process = self._get_groups_to_process(df)
         if not groups_to_process:
             raise ValueError("No data groups left after filtering.")
 
-        quantization_params, aggregated_dfs = {}, {}
+        quantization_params, aggregated_dfs, dummified_dfs = {}, {}, {}
         self.logger.info("\n--- Quantizing and Aggregating Data ---")
         for group_key, group_df in groups_to_process.items():
             for feature_col in continuous_cols:
@@ -436,42 +466,39 @@ class DistetaBatch:
                 ):
                     continue
 
-                n_classes_to_use: int
                 if self.settings.n_classes_input == "auto":
-                    series_to_quantize = cast(pd.Series, group_df[feature_col])
-                    n_classes_to_use = calculate_optimal_bins(series_to_quantize)
+                    n_classes_to_use = calculate_optimal_bins(
+                        cast(pd.Series, group_df[feature_col])
+                    )
                     self.logger.info(
-                        f"For group '{group_key}', feature '{feature_col}': "
-                        f"Auto-calculated optimal bins = {n_classes_to_use}"
+                        f"For group '{group_key}', feature '{feature_col}': Auto-calculated optimal bins = {n_classes_to_use}"
                     )
                 elif isinstance(self.settings.n_classes_input, int):
                     n_classes_to_use = self.settings.n_classes_input
                 else:
                     self.logger.error(
-                        f"Invalid value for 'quantization_n_classes_input': "
-                        f"'{self.settings.n_classes_input}'. Must be 'auto' or an "
-                        f"integer. Skipping processing for '{feature_col}' in "
-                        f"group '{group_key}'."
+                        f"Invalid value for 'quantization_n_classes_input': '{self.settings.n_classes_input}'. Skipping."
                     )
                     continue
 
                 if n_classes_to_use <= 1:
                     self.logger.warning(
-                        f"Skipping '{feature_col}' for group '{group_key}': not enough "
-                        f"data variance to create more than 1 bin."
+                        f"Skipping '{feature_col}' for group '{group_key}': not enough data variance for >1 bin."
                     )
                     continue
 
-                quant_labels = [str(i) for i in range(1, n_classes_to_use + 1)]
-
                 try:
                     df_quant, bin_edges = quantize_and_dummify(
-                        group_df, feature_col, n_classes_to_use, quant_labels
+                        group_df,
+                        feature_col,
+                        n_classes_to_use,
+                        [str(i) for i in range(1, n_classes_to_use + 1)],
                     )
                     agg_df = aggregate_by_comb(df_quant)
                     if not agg_df.empty:
                         segment_key = f"{AGG_DF_PREFIX}{group_key}_{feature_col}"
                         aggregated_dfs[segment_key] = agg_df
+                        dummified_dfs[segment_key] = df_quant
                         quantization_params[segment_key] = {
                             "bin_edges": bin_edges.tolist(),
                             "unit": self.settings.continuous_units_map.get(
@@ -485,45 +512,23 @@ class DistetaBatch:
                     )
                 except Exception as e:
                     self.logger.error(
-                        f"An unexpected error occurred while processing '{feature_col}' "
-                        f"in group '{group_key}': {e}",
+                        f"Unexpected error processing '{feature_col}' in group '{group_key}': {e}",
                         exc_info=True,
                     )
 
         if not aggregated_dfs:
             raise ValueError("No data to cluster after aggregation.")
-        return aggregated_dfs, quantization_params
+        return aggregated_dfs, quantization_params, dummified_dfs
 
     def _find_and_plot_optimal_k(
         self, aggregated_dfs: Dict, continuous_cols: List[str]
     ) -> Tuple[Dict, Dict]:
-        """
-        Performs silhouette analysis to find and plot the optimal K for clustering.
-
-        For each aggregated data segment, this method iterates through a range of
-        possible K values (number of clusters):
-        1.  Calculates the Within-Cluster Sum of Squares (WCSS) for the elbow method.
-        2.  Calculates the silhouette score for each K.
-        3.  Generates and saves plots showing the silhouette score and elbow curve
-            for each K, providing a visual aid for K-selection.
-        4.  Automatically determines the optimal K based on a configurable
-            silhouette score drop-off threshold.
-
-        Args:
-            aggregated_dfs (Dict): The dictionary of aggregated DataFrames.
-            continuous_cols (List[str]): The list of continuous columns.
-
-        Returns:
-            Tuple[Dict, Dict]: A tuple containing:
-                               - A dictionary of the determined optimal K for each segment.
-                               - A dictionary of all calculated silhouette scores for each segment.
-        """
+        """Performs clustering analysis (Elbow/Silhouette) to find the best K for each segment."""
         self.logger.info("\n--- Performing Clustering Analysis (Elbow/Silhouette) ---")
         all_silh_scores, wcss_data, labels_data = {}, {}, {}
-
         if not aggregated_dfs:
             self.logger.warning(
-                "No aggregated data to perform clustering on. Skipping K-selection."
+                "No aggregated data for clustering. Skipping K-selection."
             )
             return {}, {}
 
@@ -533,18 +538,12 @@ class DistetaBatch:
                 key=lambda x: int(x.split(QUANT_PREFIX)[1]),
             )
             if not combination_cols:
-                self.logger.warning(
-                    f"No '{QUANT_PREFIX}*' columns in segment {df_name}. Skipping."
-                )
                 continue
 
             X = df_agg[combination_cols]
             max_k_adj = min(self.settings.clustering_max_k, X.shape[0] - 1)
             min_k_adj = max(2, self.settings.clustering_min_k)
             if min_k_adj > max_k_adj:
-                self.logger.warning(
-                    f"Not enough samples in {df_name} to test K range. Skipping."
-                )
                 continue
 
             k_range = range(min_k_adj, max_k_adj + 1)
@@ -559,6 +558,7 @@ class DistetaBatch:
                 self.settings.grouping_col_config,
                 continuous_cols,
             )
+
             clustering_metrics = {
                 "wcss_data": wcss_data,
                 "k_range": k_range,
@@ -576,6 +576,7 @@ class DistetaBatch:
                         continuous_cols,
                         clustering_metrics,
                     )
+
         optimal_k = find_optimal_k_values(
             {k: filter_silhouette_scores(v) for k, v in all_silh_scores.items()},
             self.settings.percent_drop_threshold_input / 100.0,
@@ -589,40 +590,12 @@ class DistetaBatch:
         df_filtered: pd.DataFrame,
         continuous_cols: List[str],
         quantization_params: Dict,
-    ) -> Tuple[Dict, Dict]:
-        """
-        Performs final clustering and calculates High-Density Regions (HDR).
-
-        Using the optimal K value determined for each segment, this method:
-        1.  Runs K-Means clustering on the aggregated data.
-        2.  Creates a mapping from each original 'combination' to its assigned cluster.
-        3.  Generates a summary profile for each final cluster.
-        4.  Saves the combination-to-cluster mapping and the final cluster profiles.
-        5.  Analyzes the composition of each cluster in terms of the original
-            categorical features.
-        6.  Calculates the High-Density Region (HDR) for each cluster's distribution,
-            identifying the range of bins that contains a specified percentage of
-            the distribution's mass.
-
-        Args:
-            aggregated_dfs (Dict): The dictionary of aggregated DataFrames.
-            optimal_k_values (Dict): The dictionary of optimal K values for each segment.
-            df_filtered (pd.DataFrame): The filtered DataFrame from the preparation step.
-            continuous_cols (List[str]): The list of continuous columns.
-            quantization_params (Dict): The dictionary of quantization parameters.
-
-        Returns:
-            Tuple[Dict, Dict]: A tuple containing:
-                               - A dictionary of the final cluster profile DataFrames.
-                               - A dictionary containing the HDR results for each cluster.
-        """
+    ) -> Tuple[Dict, Dict, Dict]:
+        """Performs final clustering with optimal K and calculates HDR for each cluster."""
         self.logger.info("\n--- Performing Final Clustering with Optimal K ---")
-        final_cluster_profiles, hdr_results = {}, {}
+        final_cluster_profiles, hdr_results, cluster_mappings = {}, {}, {}
         for df_name, df_agg in aggregated_dfs.items():
             if df_name not in optimal_k_values:
-                self.logger.warning(
-                    f"No optimal K found for {df_name}, skipping final clustering."
-                )
                 continue
             k_final = optimal_k_values[df_name]
             combination_cols = sorted(
@@ -633,7 +606,11 @@ class DistetaBatch:
                 df_agg, combination_cols, k_final
             )
             final_df_key = df_name.replace(AGG_DF_PREFIX, "")
-            final_cluster_profiles[final_df_key] = df_sum
+            final_cluster_profiles[final_df_key], cluster_mappings[df_name] = (
+                df_sum,
+                df_map,
+            )
+
             self._save_dataframe(
                 df_map, f"02_combination_to_cluster_mapping_{final_df_key}"
             )
@@ -650,7 +627,6 @@ class DistetaBatch:
                 quant_params_for_segment.get("original_n_classes_input", 0),
             )
             if n_classes == 0:
-                self.logger.warning(f"No n_classes info for {df_name}, skipping HDR.")
                 continue
 
             for _, row in df_sum.iterrows():
@@ -662,7 +638,121 @@ class DistetaBatch:
                     bin_edges,
                     unit,
                 )
-        return final_cluster_profiles, hdr_results
+        return final_cluster_profiles, hdr_results, cluster_mappings
+
+    def _train_and_save_classifiers(
+        self,
+        dummified_dfs: Dict,
+        cluster_mappings: Dict,
+        optimal_k_values: Dict,
+        quantization_params: Dict,
+    ):
+        """Trains and saves an XGBoost classifier for each data segment."""
+        self.logger.info("\n--- Training and Saving Cluster Prediction Models ---")
+        os.makedirs(constants.MODELS_DIR, exist_ok=True)
+
+        for df_name, df_map in cluster_mappings.items():
+            if (
+                df_name not in optimal_k_values
+                or df_name not in dummified_dfs
+                or df_name not in quantization_params
+            ):
+                continue
+
+            try:
+                df_quant = dummified_dfs[df_name]
+                df_train_full = pd.merge(
+                    df_quant, df_map[[COMB_COL, CLUSTER_COL]], on=COMB_COL, how="inner"
+                )
+                if df_train_full.empty:
+                    continue
+
+                feature_cols = sorted(
+                    [c for c in df_train_full.columns if c.startswith(QUANT_PREFIX)],
+                    key=lambda x: int(x.split(QUANT_PREFIX)[1]),
+                )
+                y_train_raw, X_train = (
+                    df_train_full[CLUSTER_COL],
+                    df_train_full[feature_cols],
+                )
+
+                le = LabelEncoder()
+                y_train = le.fit_transform(y_train_raw)
+
+                if not hasattr(le, "classes_") or le.classes_ is None:
+                    self.logger.warning(
+                        f"Segment '{df_name}' failed to produce classes after encoding. Skipping model training."
+                    )
+                    continue
+
+                num_classes = len(le.classes_)
+                if num_classes < 2:
+                    self.logger.warning(
+                        f"Segment '{df_name}' has fewer than 2 classes ({num_classes}). Skipping model training."
+                    )
+                    continue
+
+                self.logger.info(
+                    f"  Training model for segment '{df_name}' with {len(X_train)} samples and {num_classes} classes."
+                )
+                model = xgb.XGBClassifier(
+                    objective="multi:softprob",
+                    num_class=num_classes,
+                    use_label_encoder=False,
+                    eval_metric="mlogloss",
+                )
+                model.fit(X_train, y_train)
+
+                y_pred = model.predict(X_train)
+                y_pred_proba = model.predict_proba(X_train)
+                report = classification_report(
+                    y_train,
+                    y_pred,
+                    output_dict=True,
+                    zero_division=0.0,  # type: ignore
+                )
+                auroc = roc_auc_score(
+                    y_train, y_pred_proba, multi_class="ovr", average="weighted"
+                )
+
+                model_metadata = {
+                    "training_timestamp": self.run_timestamp,
+                    "config_name": self.run_config_name,
+                    "segment_name": df_name.replace(f"{AGG_DF_PREFIX}", ""),
+                    "num_samples_trained": len(X_train),
+                    "num_features": X_train.shape[1],
+                    "num_classes": num_classes,
+                    "accuracy": accuracy_score(y_train, y_pred),
+                    "auroc_weighted_ovr": auroc,
+                    "classification_report": report,
+                    "label_mapping": dict(
+                        zip(
+                            range(num_classes),
+                            le.inverse_transform(range(num_classes)),
+                        )
+                    ),
+                }
+
+                model_filename = f"{self.run_config_name}_{df_name.replace(f'{AGG_DF_PREFIX}', '')}.json"
+                model_filepath = os.path.join(constants.MODELS_DIR, model_filename)
+                model.save_model(model_filepath)
+                self.logger.info(f"  Saved trained model to: {model_filepath}")
+
+                metadata_filepath = os.path.join(
+                    constants.MODELS_DIR,
+                    model_filename.replace(".json", "_metadata.json"),
+                )
+                with open(metadata_filepath, "w", encoding="utf-8") as f:
+                    json.dump(
+                        model_metadata, f, indent=4, default=_default_json_converter
+                    )
+                self.logger.info(f"  Saved model metadata to: {metadata_filepath}")
+
+            except Exception as e:
+                self.logger.error(
+                    f"Failed to train or save model for segment {df_name}: {e}",
+                    exc_info=True,
+                )
 
     def _plot_final_cluster_distributions(
         self,
@@ -671,20 +761,7 @@ class DistetaBatch:
         quantization_params: Dict,
         hdr_results: Dict,
     ):
-        """
-        Generates and saves plots of the final cluster distributions.
-
-        For each segment, this method creates a plot showing the distribution
-        (as a bar chart of quantized bins) for each of the identified clusters.
-        It also overlays the calculated High-Density Region (HDR) on each
-        distribution.
-
-        Args:
-            final_cluster_profiles (Dict): The dictionary of final cluster profile DataFrames.
-            continuous_cols (List[str]): The list of continuous columns.
-            quantization_params (Dict): The dictionary of quantization parameters.
-            hdr_results (Dict): The dictionary of HDR results.
-        """
+        """Generates and stores plots for the final cluster distributions."""
         self.logger.info("\n--- Plotting Final Cluster Distributions ---")
         for final_df_name, df_final_sum in final_cluster_profiles.items():
             group_key, feature_name = self._parse_group_and_feature(
@@ -707,9 +784,7 @@ class DistetaBatch:
                 column_name_mapping=self.settings.column_name_mapping,
                 x_axis_label=self.settings.quantized_axis_label_config,
                 hdr_info_for_plot=hdr_results.get(final_df_name, {}),
-                hdr_threshold_percentage=(
-                    self.settings.hdr_threshold_percentage_config
-                ),
+                hdr_threshold_percentage=self.settings.hdr_threshold_percentage_config,
                 save_non_interactive=True,
             )
             if fig:
@@ -717,79 +792,8 @@ class DistetaBatch:
                     (fig, f"03_cluster_distributions_{final_df_name}")
                 )
 
-    def run_analysis(self):
-        """Executes the full DistetaBatch analysis workflow."""
-        self._setup_output_directories()
-        log_filepath = os.path.join(
-            self.logs_output_path, f"analysis_log_{self.run_config_name}.log"
-        )
-        done_filepath = os.path.join(constants.OUTPUT_DIR, ".analysis_done")
-
-        if os.path.exists(done_filepath):
-            os.remove(done_filepath)
-
-        file_handler = logging.FileHandler(log_filepath, encoding="utf-8")
-        formatter = logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-        )
-        file_handler.setFormatter(formatter)
-        root_logger = logging.getLogger()
-        root_logger.addHandler(file_handler)
-        self.logger.info(f"Logging for this run is being saved to: {log_filepath}")
-        try:
-            start_time = time.time()
-            self.logger.info(
-                f"--- Starting DistetaBatch Analysis for config '{self.run_config_name}' ---"
-            )
-            df_filtered, continuous_cols = self._prepare_data()
-            aggregated_dfs, quantization_params = self._quantize_and_aggregate_segments(
-                df_filtered, continuous_cols
-            )
-            optimal_k_values, all_silh_scores = self._find_and_plot_optimal_k(
-                aggregated_dfs, continuous_cols
-            )
-            final_cluster_profiles, hdr_results = (
-                self._perform_final_clustering_and_hdr(
-                    aggregated_dfs,
-                    optimal_k_values,
-                    df_filtered,
-                    continuous_cols,
-                    quantization_params,
-                )
-            )
-            self._plot_final_cluster_distributions(
-                final_cluster_profiles,
-                continuous_cols,
-                quantization_params,
-                hdr_results,
-            )
-
-            # Save all data artifacts (JSONs, CSVs are saved elsewhere)
-            self._save_json_artifacts(
-                continuous_cols,
-                optimal_k_values,
-                all_silh_scores,
-                final_cluster_profiles,
-                hdr_results,
-                quantization_params,
-            )
-            # Save all generated figures to disk
-            self._save_all_generated_figures()
-            end_time = time.time()
-            self.logger.info(
-                f"\nAnalysis for config '{self.run_config_name}' complete. "
-                f"Total time: {end_time - start_time:.2f}s."
-            )
-
-            with open(done_filepath, "w") as f:
-                f.write(self.run_specific_output_dir)
-
-        finally:
-            logging.getLogger().removeHandler(file_handler)
-            file_handler.close()
-
     def _plot_initial_distributions(self, df: pd.DataFrame, continuous_cols: List[str]):
-        """Helper to generate and store the initial data distribution histograms."""
+        """Generates and stores plots for the initial data distributions."""
         plot_groups_df = (
             pd.concat(self._get_groups_to_process(df).values())
             if self.settings.grouping_col_config
@@ -817,7 +821,7 @@ class DistetaBatch:
         continuous_cols,
         clustering_metrics: Dict,
     ):
-        """Helper to plot the silhouette analysis for a given K."""
+        """Generates and stores plots for the silhouette and elbow analysis."""
         fig_silh = plot_silhouette_and_elbow(
             X=X,
             cluster_labels=clustering_metrics["labels_data"][df_name][k],
@@ -842,35 +846,31 @@ class DistetaBatch:
             )
 
     def _save_all_generated_figures(self):
-        """Saves all generated Plotly figures to both PNG and HTML files."""
-        self.logger.info(f"Saving plots to '{self.graphics_output_path}'...")
+        """Saves all generated figures to PNG and HTML files."""
+        self.logger.info(
+            f"Saving {len(self.generated_figures)} plots to '{self.graphics_output_path}'..."
+        )
         for fig, base_filename in self.generated_figures:
             safe_filename = base_filename.replace(" ", "_").replace("/", "-")
-
-            # --- Save as PNG (static) ---
-            png_filepath = os.path.join(
-                self.graphics_output_path, f"{safe_filename}.png"
-            )
             try:
-                # Static PNGs require a fixed size for consistent layout in reports.
-                fig.write_image(png_filepath, width=1280, height=720)
+                fig.write_image(
+                    os.path.join(self.graphics_output_path, f"{safe_filename}.png"),
+                    width=1280,
+                    height=720,
+                )
             except Exception as e:
                 self.logger.error(
-                    f"Failed to save PNG {png_filepath}: {e}. Ensure 'kaleido' "
-                    f"is installed and up-to-date."
+                    f"Failed to save PNG {safe_filename}.png: {e}. Ensure 'kaleido' is installed."
                 )
-
-            html_filepath = os.path.join(
-                self.graphics_output_path, f"{safe_filename}.html"
-            )
             try:
-                # For interactive HTML, we remove fixed sizes and set autosize=True.
-                # This allows the plot to fill its container (e.g., an iframe)
-                # and be responsive in the final HTML report.
                 fig.update_layout(width=None, height=None, autosize=True)
-                fig.write_html(html_filepath, include_plotlyjs="cdn", full_html=False)
+                fig.write_html(
+                    os.path.join(self.graphics_output_path, f"{safe_filename}.html"),
+                    include_plotlyjs="cdn",
+                    full_html=False,
+                )
             except Exception as e:
-                self.logger.error(f"Failed to save HTML {html_filepath}: {e}.")
+                self.logger.error(f"Failed to save HTML {safe_filename}.html: {e}.")
 
     def _save_json_artifacts(
         self,
@@ -881,35 +881,26 @@ class DistetaBatch:
         hdr_results,
         quant_params,
     ):
-        """Saves all non-plot, non-CSV artifacts (JSON summaries) for the run."""
+        """Saves all JSON summary artifacts for the run."""
         self.logger.info(
-            f"Saving JSON summary artifacts to '{self.logs_output_path}'..."
+            f"Saving JSON summary artifacts to '{self.data_output_path}'..."
         )
-
-        # Create the detailed summary dictionary for final cluster profiles
-        final_profiles_for_json = {}
-        for final_df_name, df_final_sum in cluster_profiles.items():
-            if df_final_sum is not None and not df_final_sum.empty:
-                final_profiles_for_json[final_df_name] = (
-                    self._create_segment_profile_summary(
-                        final_df_name,
-                        df_final_sum,
-                        optimal_k,
-                        quant_params,
-                        hdr_results,
-                    )
-                )
-
-        k_selection_summary = {
-            "optimal_k_values": optimal_k,
-            "silhouette_scores_by_segment": k_metrics,
+        final_profiles_for_json = {
+            name: self._create_segment_profile_summary(
+                name, df, optimal_k, quant_params, hdr_results
+            )
+            for name, df in cluster_profiles.items()
+            if df is not None and not df.empty
         }
         self._save_json(self._create_run_summary(continuous_cols), "run_summary.json")
-        self._save_json(k_selection_summary, "k_selection_summary.json")
+        self._save_json(
+            {"optimal_k_values": optimal_k, "silhouette_scores_by_segment": k_metrics},
+            "k_selection_summary.json",
+        )
         self._save_json(final_profiles_for_json, "final_cluster_profiles.json")
 
-    def _create_run_summary(self, continuous_cols):
-        """Creates a dictionary summarizing the configuration for this run."""
+    def _create_run_summary(self, continuous_cols: List[str]) -> Dict[str, Any]:
+        """Creates a dictionary summarizing the main configuration settings for the run."""
         return {
             "run_timestamp": self.run_timestamp,
             "config_name_used": self.run_config_name,
@@ -917,27 +908,24 @@ class DistetaBatch:
             "categorical_columns_defined": self.settings.categorical_cols,
             "continuous_columns_analyzed": continuous_cols,
             "grouping_column_used": self.settings.grouping_col_config or "N/A",
-            "filter_values_for_grouping_column": (
-                self.settings.filter_values_config or "all_available_groups_processed"
-            ),
+            "filter_values_for_grouping_column": self.settings.filter_values_config
+            or "all_available_groups_processed",
             "min_combination_size_input": self.settings.min_comb_size_input,
             "quantization_n_classes_input": self.settings.n_classes_input,
             "clustering_k_range_tested": {
                 "min_k_config": self.settings.clustering_min_k,
                 "max_k_config": self.settings.clustering_max_k,
             },
-            "silhouette_score_drop_threshold_input_percentage": (
-                self.settings.percent_drop_threshold_input
-            ),
-            "hdr_threshold_percentage_input": (
-                self.settings.hdr_threshold_percentage_config
-            ),
+            "silhouette_score_drop_threshold_input_percentage": self.settings.percent_drop_threshold_input,
+            "hdr_threshold_percentage_input": self.settings.hdr_threshold_percentage_config,
+            "x_axis_label_config": self.settings.x_axis_label_config,
+            "quantized_axis_label_config": self.settings.quantized_axis_label_config,
         }
 
     def _parse_group_and_feature(
         self, base_name: str, grouping_col: Optional[str], continuous_cols: List[str]
     ) -> Tuple[Optional[str], str]:
-        """Helper to parse group key and feature name from a segment name."""
+        """Utility to extract group and feature names from a segment name string."""
         if grouping_col:
             for feature in continuous_cols:
                 if base_name.endswith(f"_{feature}"):
@@ -947,11 +935,8 @@ class DistetaBatch:
         return ALL_DATA_GROUP_KEY, base_name
 
     def _save_dataframe(self, df: pd.DataFrame, base_filename: str):
-        """Saves a DataFrame to a CSV file."""
+        """Saves a DataFrame to a CSV file in the data output directory."""
         if df is None or df.empty:
-            self.logger.warning(
-                f"DataFrame for '{base_filename}' is empty. Skipping save."
-            )
             return
         safe_filename = base_filename.replace(" ", "_").replace("/", "-") + ".csv"
         filepath = os.path.join(self.data_output_path, safe_filename)
@@ -968,20 +953,13 @@ class DistetaBatch:
         segment_name: str,
         continuous_cols: List[str],
     ):
-        """
-        Analyzes cluster composition by inspecting the categorical features
-        that define each combination. Saves a detailed CSV and a
-        user-specified structured JSON.
-        """
+        """Analyzes and saves the categorical and continuous composition of each cluster."""
         self.logger.info(f"  Analyzing cluster composition for segment: {segment_name}")
         try:
             if (
                 COMB_COL not in original_filtered_df.columns
                 or CLUSTER_COL not in combination_to_cluster_map.columns
             ):
-                self.logger.error(
-                    f"Missing required columns for composition analysis in {segment_name}."
-                )
                 return
 
             df_with_clusters = original_filtered_df.merge(
@@ -996,18 +974,12 @@ class DistetaBatch:
                 df_with_clusters, self.settings.categorical_cols
             )
             if not dummified_cols:
-                self.logger.warning(
-                    f"No dummified categorical columns found for composition analysis "
-                    f"in {segment_name}."
-                )
                 return
 
-            # --- Prepare outputs for both JSON and CSV ---
-            json_output = {}
-            summary_list_for_csv = []
+            json_output: Dict[str, Any] = {}
+            summary_list_for_csv: List[pd.DataFrame] = []
 
-            for cluster_id_numpy in sorted(df_with_clusters[CLUSTER_COL].unique()):
-                cluster_id = int(cluster_id_numpy)
+            for cluster_id in sorted(df_with_clusters[CLUSTER_COL].unique()):
                 cluster_key = f"cluster_{cluster_id}"
                 cluster_df = df_with_clusters[
                     df_with_clusters[CLUSTER_COL] == cluster_id
@@ -1018,9 +990,6 @@ class DistetaBatch:
                     "total_rows_in_cluster": total_rows_in_cluster,
                     "composition": {},
                 }
-
-                # --- 1. Process DUMMIFIED columns ---
-                # These columns have values of 1 or 0. The sum is the count.
                 composition_counts = cluster_df[dummified_cols].sum()
 
                 for feature_value_key, count in composition_counts.items():
@@ -1029,14 +998,11 @@ class DistetaBatch:
                         if total_rows_in_cluster > 0
                         else 0
                     )
-
-                    # Populate the JSON
                     json_output[cluster_key]["composition"][feature_value_key] = {
                         "count": int(count),
                         "percentage": round(float(percentage), 2),
                     }
 
-                # --- 2. Create the detailed CSV ---
                 csv_cat_summary = composition_counts.reset_index()
                 csv_cat_summary.columns = ["feature_value", "count"]
                 csv_cat_summary["percentage"] = (
@@ -1046,24 +1012,25 @@ class DistetaBatch:
                 summary_list_for_csv.append(csv_cat_summary)
 
                 if continuous_cols:
-                    continuous_data_for_describe = cast(
-                        pd.DataFrame, cluster_df[continuous_cols]
+                    desc_stats = (
+                        cast(pd.DataFrame, cluster_df[continuous_cols])
+                        .describe()
+                        .transpose()
+                        .reset_index()
                     )
-                    desc_stats = continuous_data_for_describe.describe().transpose()
-                    desc_df = desc_stats.reset_index()
-                    desc_df.rename(columns={"index": "column"}, inplace=True)
-                    desc_df["cluster"] = cluster_id
-                    summary_list_for_csv.append(desc_df)
+                    desc_stats.rename(columns={"index": "column"}, inplace=True)
+                    desc_stats["cluster"] = cluster_id
+                    summary_list_for_csv.append(desc_stats)
 
             if summary_list_for_csv:
-                full_summary_df = pd.concat(summary_list_for_csv, ignore_index=True)
                 self._save_dataframe(
-                    full_summary_df, f"04_cluster_composition_summary_{segment_name}"
+                    pd.concat(summary_list_for_csv, ignore_index=True),
+                    f"04_cluster_composition_summary_{segment_name}",
                 )
-
             if json_output:
-                filepath = f"cluster_composition_summary_{segment_name}.json"
-                self._save_json(json_output, filepath)
+                self._save_json(
+                    json_output, f"cluster_composition_summary_{segment_name}.json"
+                )
         except Exception as e:
             self.logger.error(
                 f"    Error during cluster composition analysis for {segment_name}: {e}",
@@ -1071,50 +1038,29 @@ class DistetaBatch:
             )
 
     def _save_json(self, data: dict, filename: str):
-        """Saves a dictionary to a JSON file, handling numpy types."""
+        """Saves a dictionary to a JSON file with custom numpy type handling."""
         if not data:
-            self.logger.info(f"No data to save for {filename}. Skipping.")
             return
-
         filepath = os.path.join(self.data_output_path, filename)
-
         try:
             with open(filepath, "w", encoding="utf-8") as f:
-
-                def default_converter(o):
-                    if isinstance(o, np.integer):
-                        return int(o)
-                    if isinstance(o, np.floating):
-                        return float(o)
-                    if isinstance(o, np.ndarray):
-                        return o.tolist()
-                    raise TypeError(
-                        f"Object of type {o.__class__.__name__} is not JSON "
-                        f"serializable"
-                    )
-
-                json.dump(data, f, indent=4, default=default_converter)
+                json.dump(data, f, indent=4, default=_default_json_converter)
             self.logger.info(f"  Saved JSON: {filepath}")
         except Exception as e:
             self.logger.error(f"    Error saving JSON {filepath}: {e}")
 
     def _create_segment_profile_summary(
-        self,
-        final_df_name,
-        df_final_sum,
-        optimal_k_values,
-        quant_params,
-        hdr_results,
-    ):
-        """Helper to create the detailed summary for final_cluster_profiles.json."""
-        segment_key = f"{AGG_DF_PREFIX}{final_df_name}"  # noqa: E501
+        self, final_df_name, df_final_sum, optimal_k_values, quant_params, hdr_results
+    ) -> Dict[str, Any]:
+        """Creates a detailed summary dictionary for a single segment's cluster profiles."""
+        segment_key = f"{AGG_DF_PREFIX}{final_df_name}"
         quant_params_for_segment = quant_params.get(segment_key, {})
-        n_classes_used = quant_params_for_segment.get("original_n_classes_input", "N/A")
-
-        current_segment_profile = {
+        current_segment_profile: Dict[str, Any] = {
             "segment_name": final_df_name,
             "optimal_k_used": int(optimal_k_values.get(segment_key, 0)),
-            "quantization_bins": n_classes_used,
+            "quantization_bins": quant_params_for_segment.get(
+                "original_n_classes_input", "N/A"
+            ),
             "bin_edges": quant_params_for_segment.get("bin_edges", []),
             "unit": quant_params_for_segment.get("unit", "units"),
             "clusters": [],
@@ -1123,29 +1069,26 @@ class DistetaBatch:
             cluster_id = int(cluster_row[CLUSTER_COL])
             cluster_c_cols = cluster_row.filter(like=QUANT_PREFIX)
             total_items_in_cluster = cluster_c_cols.sum()
-            bin_profiles = []
-            for bin_col, count in cluster_c_cols.items():
-                bin_num = int(bin_col.replace(QUANT_PREFIX, ""))
-                bin_profiles.append(
-                    {
-                        "bin_label": bin_num,
-                        "count": float(count),
-                        "percentage_of_cluster": (
-                            (float(count) / total_items_in_cluster * 100)
-                            if total_items_in_cluster > 0
-                            else 0
-                        ),
-                    }
-                )
+            bin_profiles = [
+                {
+                    "bin_label": int(bin_col.replace(QUANT_PREFIX, "")),
+                    "count": float(count),
+                    "percentage_of_cluster": (
+                        float(count) / total_items_in_cluster * 100
+                    )
+                    if total_items_in_cluster > 0
+                    else 0,
+                }
+                for bin_col, count in cluster_c_cols.items()
+            ]
 
-            hdr_info_for_cluster = hdr_results.get(final_df_name, {}).get(
-                str(cluster_id), {}
-            )
             current_segment_profile["clusters"].append(
                 {
                     "cluster_id": cluster_id,
                     "total_items": float(total_items_in_cluster),
-                    "hdr_profile": hdr_info_for_cluster,
+                    "hdr_profile": hdr_results.get(final_df_name, {}).get(
+                        str(cluster_id), {}
+                    ),
                     "bin_profiles": sorted(bin_profiles, key=lambda x: x["bin_label"]),
                 }
             )
@@ -1153,16 +1096,13 @@ class DistetaBatch:
 
 
 # =============================================================================
-# ORCHESTRATION (The run_all_analyses function)
+# ORCHESTRATION
 # =============================================================================
 def run_all_analyses():
     """
-    Main orchestration function to load configurations and run the analysis
-    for all active configurations specified in the main config file.
-    This function is designed to be callable from other scripts.
+    Main orchestration function to load configurations and run the analysis for all active configurations.
     """
     main_logger = logging.getLogger(__name__)
-
     try:
         main_logger.info(f"Loading multi-config file from: {DEFAULT_CONFIG_PATH}")
         multi_config = load_config(DEFAULT_CONFIG_PATH)
@@ -1170,15 +1110,13 @@ def run_all_analyses():
         active_configs = multi_config.get("active_config_names")
         if not active_configs or not isinstance(active_configs, list):
             raise ValueError(
-                "Config file must contain a list key 'active_config_names' "
-                "with at least one config block name."
+                "Config file must contain a list key 'active_config_names'."
             )
 
         main_logger.info(f"Found active configurations to run: {active_configs}")
 
         for config_name in active_configs:
             main_logger.info(f"\n--- Running analysis for: '{config_name}' ---")
-
             run_config = multi_config.get(config_name)
             if not run_config:
                 main_logger.error(
@@ -1186,20 +1124,10 @@ def run_all_analyses():
                 )
                 continue
 
-            common_settings = multi_config.get("common_settings", {})
-
-            def merge_dicts(base, override):
-                for k, v in override.items():
-                    if isinstance(v, dict) and k in base and isinstance(base[k], dict):
-                        base[k] = merge_dicts(base[k], v)
-                    else:
-                        base[k] = v
-                return base
-
-            import copy
-
-            final_config = copy.deepcopy(common_settings)
-            final_config = merge_dicts(final_config, run_config)
+            # Deep merge common settings with specific run config
+            final_config = copy.deepcopy(multi_config.get("common_settings", {}))
+            # Ensure run_config is a dict before merging
+            final_config = merge_dicts(final_config, run_config or {})
 
             settings = AnalysisSettings.from_dict(final_config)
             analyzer = DistetaBatch(
@@ -1212,33 +1140,40 @@ def run_all_analyses():
 
     except FileNotFoundError:
         main_logger.error(
-            f"FATAL: The main configuration file was not found at "
-            f"'{DEFAULT_CONFIG_PATH}'"
+            f"FATAL: The main configuration file was not found at '{DEFAULT_CONFIG_PATH}'"
         )
-        raise  # Re-raise to allow the caller to handle it
+        raise
     except Exception as e:
         main_logger.error(
             f"An unexpected error occurred during analysis execution: {e}",
             exc_info=True,
         )
-        raise  # Re-raise
+        raise
+
+
+def merge_dicts(base: Dict, override: Optional[Dict]) -> Dict:
+    """Recursively merges two dictionaries."""
+    if override is None:
+        return base
+    for k, v in override.items():
+        if isinstance(v, dict) and k in base and isinstance(base[k], dict):
+            base[k] = merge_dicts(base[k], v)
+        else:
+            base[k] = v
+    return base
 
 
 # =============================================================================
-# SCRIPT EXECUTION (The if __name__ == "__main__" block)
+# SCRIPT EXECUTION
 # =============================================================================
 if __name__ == "__main__":
-    # Basic logging configuration to see output in the console
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
-
     try:
         run_all_analyses()
     except Exception as e:
-        # Errors are logged in detail within run_all_analyses, but we catch here
-        # to ensure the script exits with a non-zero status code on failure.
         logging.critical(
             f"A critical error occurred, and the process will terminate. Error: {e}"
         )

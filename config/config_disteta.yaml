@@ -32,17 +32,16 @@ common_settings: &common_settings # --- Preprocessing & Data Cleaning ---
     #   - Integer: Manually set a fixed number of bins (e.g., 100).
     quantization_n_classes_input: "auto"
 
-    # Controls the search for the optimal number of clusters (K).
-    # The search stops if the silhouette score drops by more than this percentage
-    # when trying a higher K. A smaller value (e.g., 1.5) is more selective.
-    silhouette_score_drop_percentage_input: 5
-
   # --- Clustering Parameters ---
   clustering:
     # The search range for K (number of clusters). The script will test every
     # integer value from min to max to find the best K.
-    cluster_range_min: 3
-    cluster_range_max: 8
+    clustering_min_k: 3
+    clustering_max_k: 8
+    # Controls the search for the optimal number of clusters (K).
+    # The search stops if the silhouette score drops by more than this percentage
+    # when trying a higher K. A smaller value (e.g., 1.5) is more selective.
+    percent_drop_threshold_input: 5.0
 
   # --- High-Density Region (HDR) Analysis ---
   hdr_analysis:
@@ -51,8 +50,7 @@ common_settings: &common_settings # --- Preprocessing & Data Cleaning ---
     hdr_threshold_percentage: 75
 
   # --- Plotting Defaults ---
-  # Default axis labels for plots. Can be overridden in each analysis blueprint.
-  plotting: &common_plotting
+  visualization:
     x_axis_label: "Value"
     quantized_axis_label: "Bin"
 
@@ -62,8 +60,7 @@ common_settings: &common_settings # --- Preprocessing & Data Cleaning ---
 #    - The script will run them in the order they appear.
 # -----------------------------------------------------------------------------
 active_config_names:
-  # - "port_sines_config"  # Example: This analysis is currently disabled
-  - "truck_data_config" # Example: This analysis is currently enabled
+  - "truck_data_config"
 
 # =============================================================================
 # ==                          ANALYSIS BLUEPRINTS                          ==
@@ -78,50 +75,28 @@ active_config_names:
 #  BLUEPRINT 1: Truck Drayage Data Analysis
 # -----------------------------------------------------------------------------
 truck_data_config:
-  # This inherits all default settings from "&common_settings" defined above.
   <<: *common_settings
 
-  # --- I/O and Column Definitions ---
   io:
     input_data_path: "data/truck_arrival_data.csv"
   columns:
     grouping_column: "route"
+    filter_values: ["sin_por", "sin_lis"]
     categorical: ["weekday", "weight_class", "start_time"]
     continuous_to_analyze: ["total_time"]
-    continuous_units:
-      total_time: "Hours"
-
-  # --- Data Filtering (Optional) ---
-  # Use this to run the analysis on a subset of the data.
-  # For example, to analyze only the "Sines - Porto" and "Sines - Lisboa" routes:
-  # filter_group_value: ["sin_por", "sin_lis"], []
-  filtering:
-    filter_group_value: ["sin_por", "sin_lis"]
-
-  # --- Preprocessing Overrides (Optional) ---
-  # This section overrides the default preprocessing settings from above.
-  preprocessing:
-    # The default 'auto-knee' is too aggressive for this dataset.
-    # 'p25' provides more predictable filtering by keeping the top 75% of combinations.
-    min_combination_size_input: "p15"
-    # These settings are inherited from &common_settings, but are shown here for clarity.
-    quantization_n_classes_input: "auto"
-    silhouette_score_drop_percentage_input: 5
-
-  # --- Mappings for Readable Outputs ---
-  mapping:
-    column_value:
+    continuous_units_map:
+      total_time: "hours"
+    value_mapping:
       route:
         sin_lis: "Sines - Lisboa"
         sin_por: "Sines - Porto"
-        sin_ent: "Sines - Entroncamento"
-        sin_bad: "Sines - Badajoz"
-    column_name:
+    column_name_mapping:
       total_time: "Total Travel Time"
 
-  # --- Plotting Overrides ---
-  plotting:
-    <<: *common_plotting # Inherits default plotting labels
+  preprocessing:
+    min_combination_size_input: "p15"
+
+  visualization:
     x_axis_label: "Travel Time (Hours)"
     quantized_axis_label: "Time Bin"
 
@@ -129,35 +104,21 @@ truck_data_config:
 #  BLUEPRINT 2: Port of Sines Dwell Time Analysis
 # -----------------------------------------------------------------------------
 port_sines_config:
-  # This inherits all default settings from "&common_settings" defined above.
   <<: *common_settings
 
-  # --- I/O and Column Definitions ---
   io:
     input_data_path: "data/df_XXI.parquet"
   columns:
-    grouping_column: null # Set to null when there's no primary grouping
+    grouping_column: null
     categorical:
       - "weight_class"
       - "iso_type"
       - "weekday_inbound"
       - "weekday_outbound"
     continuous_to_analyze: ["delta_hours"]
-    continuous_units:
+    continuous_units_map:
       delta_hours: "Hours"
 
-  # --- Data Filtering (Optional) ---
-  filtering:
-    filter_group_value: [] # No filters applied
-
-  # --- Mappings for Readable Outputs ---
-  mapping:
-    column_value: {}
-    column_name:
-      delta_hours: "Dwell Time"
-
-  # --- Plotting Overrides ---
-  plotting:
-    <<: *common_plotting # Inherits default plotting labels
+  visualization:
     x_axis_label: "Dwell Time (Hours)"
     quantized_axis_label: "Time Bin"

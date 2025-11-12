@@ -26,6 +26,21 @@ services:
     profiles:
       - analyze
 
+  streamer:
+    <<: *base-service
+    container_name: disteta_streamer
+    command: >
+      sh -c "python -m src.disteta_streaming.main"
+    volumes:
+      - ./output:/app/output
+      - ./config:/app/config
+      - ./assets:/app/assets
+      - ./models:/app/models
+    environment:
+      <<: *base-environment
+    profiles:
+      - stream
+
   report_generator:
     <<: *base-service
     container_name: disteta_reporter

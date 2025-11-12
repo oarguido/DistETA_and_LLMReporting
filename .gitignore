@@ -36,3 +36,6 @@ data/df_XXI.parquet
 
 # Jupyter Notebook
 .ipynb_checkpoints
+
+# Models
+models/

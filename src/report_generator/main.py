@@ -18,8 +18,11 @@ The key responsibilities of this module are:
     and styled HTML, and can serve it via a local FastAPI web server.
 
 Execution:
-    To generate a report and serve it, execute this module as a script:
+    To generate a report for the latest run and serve it:
     $ python -m src.report_generator.main
+
+    To run the analysis first and then generate a report:
+    $ python -m src.report_generator.main --run-analysis
 """
 
 # =============================================================================
@@ -61,7 +64,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
-# Silence noisy third-party loggers
+# Silence noisy third-party loggers to keep the output clean.
 logging.getLogger("kaleido").setLevel(logging.WARNING)
 logging.getLogger("shutil").setLevel(logging.WARNING)
 logging.getLogger("absl").setLevel(logging.ERROR)
@@ -77,7 +80,7 @@ except ImportError:
 
 # --- Application Configuration ---
 DEFAULT_REPORT_CONFIG_PATH = os.path.join(
-    constants.CONFIG_DIR, "config_report_generator.yaml"
+    constants.CONFIG_DIR, constants.REPORT_GEN_CONFIG_FILENAME
 )
 STYLE_SHEET_PATH = os.path.join(constants.ASSETS_DIR, "styles.css")
 
@@ -92,57 +95,79 @@ OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL")
 # CONFIGURATION MODELS (Pydantic)
 # =============================================================================
 class GeminiSettings(BaseModel):
-    """Pydantic model for Gemini settings."""
+    """Settings specific to the Google Gemini provider."""
 
     model_name: str = GEMINI_DEFAULT_MODEL_NAME
 
 
 class OllamaSettings(BaseModel):
-    """Pydantic model for Ollama settings."""
+    """Settings specific to a local Ollama provider."""
 
     model_name: Optional[str] = None
 
 
 class LLMConfig(BaseModel):
-    """Pydantic model for LLM provider and model configuration."""
+    """Configuration for the LLM provider and its specific settings."""
 
-    provider: str = "gemini"
-    gemini_settings: GeminiSettings = Field(default_factory=lambda: GeminiSettings())
-    ollama_settings: OllamaSettings = Field(default_factory=lambda: OllamaSettings())
+    provider: str = Field(
+        default="gemini", description="The LLM provider to use ('gemini' or 'ollama')."
+    )
+    gemini_settings: GeminiSettings = Field(default_factory=GeminiSettings)
+    ollama_settings: OllamaSettings = Field(default_factory=OllamaSettings)
 
 
 class DirectoryStructureConfig(BaseModel):
-    """Pydantic model for directory and file path configurations."""
+    """Defines the expected structure and naming conventions for run artifacts."""
 
-    run_dir_regex: str = r"^\d{8}_\d{6}_run_.*"
-    data_dir: str = constants.DATA_DIR_NAME
-    graphics_dir: str = constants.GRAPHICS_DIR_NAME
-    logs_dir: str = constants.LOGS_DIR_NAME
-    reports_dir: str = constants.REPORTS_DIR_NAME
-    plot_type: str = "static"
-    artifact_file_formats: List[str] = ["json"]
+    run_dir_regex: str = Field(
+        default=r"^\d{8}_\d{6}_run_.*",
+        description="Regex to identify valid run directories.",
+    )
+    data_dir: str = Field(
+        default=constants.DATA_DIR_NAME, description="Subdirectory for data artifacts."
+    )
+    graphics_dir: str = Field(
+        default=constants.GRAPHICS_DIR_NAME, description="Subdirectory for plots."
+    )
+    logs_dir: str = Field(
+        default=constants.LOGS_DIR_NAME, description="Subdirectory for log files."
+    )
+    reports_dir: str = Field(
+        default=constants.REPORTS_DIR_NAME,
+        description="Subdirectory for saved reports.",
+    )
+    plot_type: str = Field(
+        default="static", description="Plot type to use ('static' or 'interactive')."
+    )
+    artifact_file_formats: List[str] = Field(
+        default=["json"], description="File extensions to gather as data artifacts."
+    )
 
 
 class VisualsConfig(BaseModel):
-    """Pydantic model for visual settings like report width."""
+    """Configuration for the visual appearance of the HTML report."""
 
-    report_width_px: int = 1100
+    report_width_px: int = Field(
+        default=1100, description="The maximum width of the report content in pixels."
+    )
 
 
 class ReportingConfig(BaseModel):
-    """Pydantic model for report appearance and content settings."""
+    """Groups all settings related to the final report's appearance."""
 
-    visuals: VisualsConfig = Field(default_factory=lambda: VisualsConfig())
+    visuals: VisualsConfig = Field(default_factory=VisualsConfig)
 
 
 class ReportGeneratorConfig(BaseModel):
-    """Main Pydantic model for the entire report generator configuration."""
+    """The main configuration model that aggregates all other settings."""
 
-    reporting: ReportingConfig = Field(default_factory=lambda: ReportingConfig())
-    llm: LLMConfig = Field(default_factory=lambda: LLMConfig())
-    llm_prompt_template: str
+    reporting: ReportingConfig = Field(default_factory=ReportingConfig)
+    llm: LLMConfig = Field(default_factory=LLMConfig)
+    llm_prompt_template: str = Field(
+        description="The main prompt template for the LLM."
+    )
     directory_structure: DirectoryStructureConfig = Field(
-        default_factory=lambda: DirectoryStructureConfig()
+        default_factory=DirectoryStructureConfig
     )
 
 
@@ -153,7 +178,22 @@ def load_report_config(
     config_path: str = DEFAULT_REPORT_CONFIG_PATH,
 ) -> ReportGeneratorConfig:
     """
-    Loads and validates report configuration from a YAML file using Pydantic.
+    Loads and validates the report generator configuration from a YAML file.
+
+    This function reads the specified YAML file, parses it, and validates its
+    structure and types against the `ReportGeneratorConfig` Pydantic model.
+
+    Args:
+        config_path: The path to the YAML configuration file.
+
+    Returns:
+        A validated ReportGeneratorConfig object.
+
+    Raises:
+        FileNotFoundError: If the config file does not exist.
+        ValueError: If the config file is empty.
+        yaml.YAMLError: If the file is not valid YAML.
+        ValidationError: If the file content does not match the Pydantic model.
     """
     try:
         with open(config_path, "r", encoding="utf-8") as f:
@@ -184,25 +224,13 @@ def load_report_config(
 # =============================================================================
 class AgnosticReportGenerator:
     """
-    Generates a comprehensive, LLM-driven analysis report.
+    Generates a comprehensive, LLM-driven analysis report from run artifacts.
 
     This class is 'agnostic' to the analysis itself, operating on the output
     artifacts (logs, JSON summaries, plots) from a DistetaBatch run. It finds
     the specified or latest run directory, gathers all relevant data, and
-    constructs a detailed prompt for a large
-    language model (LLM) to generate a human-readable report in Markdown.
-
-    The key steps are:
-    1.  **Find Run Directory**: Locates the target analysis output directory.
-    2.  **Gather Artifacts**: Collects all JSON data, plots (static or interactive),
-        and log files from the directory.
-    3.  **Invoke LLM**: Initializes the configured LLM (e.g., Gemini, Ollama)
-        and passes the gathered artifacts along with a sophisticated prompt
-        template to generate a Markdown report.
-    4.  **Post-process**: Corrects file paths in the generated Markdown to ensure
-        they are accessible when served.
-    5.  **Save Artifacts**: Saves the final report in both Markdown (.md) and
-        styled HTML (.html) formats.
+    constructs a detailed prompt for a large language model (LLM) to generate
+    a human-readable report in Markdown.
 
     Attributes:
         config (ReportGeneratorConfig): The validated configuration object.
@@ -210,11 +238,23 @@ class AgnosticReportGenerator:
     """
 
     def __init__(self, config: ReportGeneratorConfig, base_output_dir: str):
+        """
+        Initializes the AgnosticReportGenerator.
+
+        Args:
+            config: The validated configuration object.
+            base_output_dir: The root directory where run outputs are stored.
+        """
         self.config = config
         self.base_output_dir = base_output_dir
 
     def _get_html_styles(self) -> str:
-        """Loads and formats the CSS styles for the HTML report."""
+        """
+        Loads CSS, embeds Google Fonts, and injects the report width as a CSS variable.
+        
+        This method reads the project's stylesheet, combines it with web font links,
+        and formats it all within a <style> tag for inclusion in the final HTML report.
+        """
         report_width_px = self.config.reporting.visuals.report_width_px
         try:
             with open(STYLE_SHEET_PATH, "r", encoding="utf-8") as f:
@@ -225,6 +265,7 @@ class AgnosticReportGenerator:
             )
             css_content = ""
 
+        # Embed Google Fonts and the loaded CSS into a <style> tag.
         return f"""
         <link rel="preconnect" href="https://fonts.googleapis.com">
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -239,15 +280,17 @@ class AgnosticReportGenerator:
 
     def _find_latest_run_dir(self) -> Optional[str]:
         """
-        Finds the most recent timestamped run directory in the base output path.
+        Finds the most recent timestamped run directory.
 
-        It identifies directories matching the `run_dir_regex` from the config,
-        sorts them lexicographically (which works for `YYYYMMDD_HHMMSS` format),
-        and returns the path to the latest one.
+        It first checks for a `.analysis_done` file which directly points to the
+        last completed run directory. If not found, it scans the base output path
+        for directories matching the `run_dir_regex`, sorts them, and returns the
+        path to the latest one.
 
         Returns:
             The absolute path to the latest run directory, or None if not found.
         """
+        # First, check for a marker file that points to the last successful run.
         done_filepath = os.path.join(constants.OUTPUT_DIR, ".analysis_done")
         if os.path.exists(done_filepath):
             with open(done_filepath, "r") as f:
@@ -255,6 +298,7 @@ class AgnosticReportGenerator:
                 if os.path.isdir(run_dir):
                     return run_dir
 
+        # Fallback: Scan all directories if the marker file is missing.
         if not os.path.isdir(self.base_output_dir):
             logger.error(f"Output directory '{self.base_output_dir}' not found.")
             return None
@@ -270,6 +314,7 @@ class AgnosticReportGenerator:
                 f"No valid run directories found in '{self.base_output_dir}'."
             )
             return None
+        # Sort directories by name descending (YYYYMMDD_HHMMSS format ensures this is chronological).
         latest_run_subdir = sorted(potential_dirs, reverse=True)[0]
         return os.path.join(self.base_output_dir, latest_run_subdir)
 
@@ -277,15 +322,14 @@ class AgnosticReportGenerator:
         """
         Gathers all logs, JSON, and plot files from a specific run directory.
 
-        This method scans the 'data', 'logs', and 'graphics' subdirectories of a given
-        run folder to collect all necessary files for the LLM prompt. It
-        selectively excludes verbose JSON files to manage token count.
+        This method scans the 'data', 'logs', and 'graphics' subdirectories of a
+        given run folder to collect all necessary files for the LLM prompt.
 
         Args:
             run_dir: The absolute path to the run directory to scan.
 
         Returns:
-            A dictionary containing the collected artifacts.
+            A dictionary containing the collected artifacts, structured for the LLM.
         """
         artifacts = {
             "data_artifacts": {},
@@ -347,6 +391,10 @@ class AgnosticReportGenerator:
 
         Returns:
             A LangChain `Runnable` object for the configured LLM.
+
+        Raises:
+            ValueError: If the configured provider is invalid or required keys are missing.
+            ImportError: If the Ollama provider is selected but the library is not installed.
         """
         provider = self.config.llm.provider.lower()
         if provider == "gemini":
@@ -357,6 +405,7 @@ class AgnosticReportGenerator:
             model_name = self.config.llm.gemini_settings.model_name
             logger.info(f"Initializing LangChain Gemini model: {model_name}")
             return ChatGoogleGenerativeAI(model=model_name)
+
         elif provider == "ollama":
             if not ollama:
                 raise ImportError(
@@ -366,7 +415,7 @@ class AgnosticReportGenerator:
             if not model_name:
                 raise ValueError("Ollama provider selected, but no model name is set.")
             logger.info(f"Initializing LangChain Ollama model: {model_name}")
-            init_kwargs = {
+            init_kwargs: Dict[str, Any] = {
                 "model": model_name,
                 "cache": False,
             }
@@ -374,6 +423,7 @@ class AgnosticReportGenerator:
                 init_kwargs["base_url"] = OLLAMA_BASE_URL
                 logger.info(f"  Connecting to Ollama at: {OLLAMA_BASE_URL}")
             return ChatOllama(**init_kwargs)
+
         else:
             raise ValueError(f"Invalid LLM provider in config: '{provider}'")
 
@@ -396,13 +446,11 @@ class AgnosticReportGenerator:
             final_prompt_str = prompt_template.format(**input_dict)
 
             # LangChain’s multimodal input is a list of content blocks (text, image).
-            # The content for a HumanMessage can be a list of parts, where the first
-            # part is the text prompt, and subsequent parts are images.
             message_content: List[Union[str, Dict[Any, Any]]] = [
                 {"type": "text", "text": final_prompt_str}
             ]
 
-            # For static plots, load images and add to the message content
+            # For static plots, load images and add them to the message content.
             if (
                 self.config.directory_structure.plot_type == "static"
                 and Image
@@ -413,16 +461,12 @@ class AgnosticReportGenerator:
                     try:
                         # For multimodal LLMs like Gemini, images must be base64 encoded
                         # and passed as a data URI.
-                        # 1. Open the image with PIL
                         img = Image.open(img_path)
-                        # 2. Save it to a bytes buffer in memory
                         buffered = io.BytesIO()
                         img.save(buffered, format="PNG")
-                        # 3. Encode the bytes to a base64 string
                         img_base64 = base64.b64encode(buffered.getvalue()).decode(
                             "utf-8"
                         )
-                        # 4. Format as a data URI and append to the message
                         image_part: Dict[Any, Any] = {
                             "type": "image_url",
                             "image_url": f"data:image/png;base64,{img_base64}",
@@ -433,10 +477,10 @@ class AgnosticReportGenerator:
                             f"Could not load image {img_path} for LLM: {e_img}"
                         )
 
-            # Chat models expect a list of messages.
+            # Chat models expect a list of messages, so wrap in HumanMessage.
             return [HumanMessage(content=message_content)]
 
-        # Defines the sequence of operations for the report generation chain.
+        # Defines the final chain: prepare input, then call the LLM.
         return RunnableLambda(_prepare_llm_input) | llm
 
     def _create_placeholder_report(self, artifacts: Dict, run_dir_name: str) -> str:
@@ -456,7 +500,7 @@ class AgnosticReportGenerator:
         report_text = f"# Analysis Report for {run_dir_name}\n\n"
         report_text += "*(LLM report generation failed. This is a placeholder containing raw data.)*\n\n"
 
-        # Add data artifacts to placeholder
+        # Add data artifacts to placeholder.
         all_data_artifacts_parts = []
         for data in artifacts["data_artifacts"].values():
             if isinstance(data, dict):
@@ -470,7 +514,7 @@ class AgnosticReportGenerator:
         report_text += "## Data Artifacts Summary\n\n"
         report_text += f"{all_data_artifacts_str}\n\n"
 
-        # Add plots to placeholder
+        # Add plots to placeholder.
         report_text += "## Plots\n\n"
         if artifacts["plots"]:
             is_interactive = self.config.directory_structure.plot_type == "interactive"
@@ -551,13 +595,12 @@ class AgnosticReportGenerator:
         # --- Extract and format timestamp ---
         timestamp_str = run_dir_name[:15]  # e.g., "20251020_163947"
         try:
-            dt_object = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")  # type: ignore
-            human_readable_timestamp = dt_object.strftime(
-                "%B %d, %Y, at %H:%M:%S UTC"
-            )  # Added UTC for clarity
+            dt_object = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+            human_readable_timestamp = dt_object.strftime("%B %d, %Y, at %H:%M:%S UTC")
         except ValueError:
             human_readable_timestamp = "an unknown time"  # Fallback
 
+        # --- Format Data Artifacts ---
         all_data_artifacts_parts = []
         for filename, data in artifacts["data_artifacts"].items():
             if isinstance(data, dict):
@@ -573,14 +616,12 @@ class AgnosticReportGenerator:
             else "No data artifacts found."
         )
 
-        plot_embedding_instructions = ""
-        plot_files_summary = "No plot files found in the 'graphics' directory."
+        # --- Format Plot Information for the Prompt ---
         plot_extension = (
             "html"
             if self.config.directory_structure.plot_type == "interactive"
             else "png"
         )
-
         plot_list_str = (
             "\n".join([f"- `{os.path.basename(p)}`" for p in artifacts["plots"]])
             if artifacts["plots"]
@@ -619,35 +660,29 @@ class AgnosticReportGenerator:
 
         Returns:
             A tuple containing the generated report text and a dictionary of
-            token usage statistics.
+            token usage statistics, or (None, None) on failure.
         """
         logger.info("--- Generating LLM Analysis Report ---")
-
-        report_text: Optional[str] = None
-        token_usage: Optional[dict] = None
 
         try:
             llm = self._get_llm_instance()
             report_chain = self._create_report_generation_chain(llm)
-
             chain_input = self._prepare_llm_chain_input(artifacts, run_dir)
 
-            # Invoke the chain to get the response message
+            # Invoke the chain to get the response message.
             response_message = report_chain.invoke(chain_input)
             report_text = response_message.content
 
-            # For recent LangChain versions, token usage is consistently in response_metadata.
+            # Extract token usage from response metadata.
             response_meta = getattr(response_message, "response_metadata", {})
             usage_data = response_meta.get("token_usage")
-
-            # Fallback for older Gemini-specific metadata structure
             if not usage_data and hasattr(response_message, "usage_metadata"):
-                usage_data = response_message.usage_metadata
+                usage_data = (
+                    response_message.usage_metadata
+                )  # Fallback for older versions
 
+            token_usage = None
             if usage_data:
-                logger.info(
-                    f"--- {self.config.llm.provider.capitalize()} Token Usage ---"
-                )
                 token_usage = {
                     "input_tokens": usage_data.get("prompt_token_count")
                     or usage_data.get("input_tokens", 0),
@@ -655,36 +690,29 @@ class AgnosticReportGenerator:
                     or usage_data.get("output_tokens", 0),
                     "total_tokens": usage_data.get("total_token_count", 0),
                 }
-                if not token_usage.get("total_tokens") and token_usage.get(
-                    "input_tokens"
-                ):
-                    token_usage["total_tokens"] = token_usage.get(
-                        "input_tokens", 0
-                    ) + token_usage.get("output_tokens", 0)
+                if not token_usage["total_tokens"]:
+                    token_usage["total_tokens"] = (
+                        token_usage["input_tokens"] + token_usage["output_tokens"]
+                    )
 
-            if token_usage:
                 logger.info(
-                    f"  Input:  {token_usage.get('input_tokens', 'N/A')} tokens"
+                    f"--- {self.config.llm.provider.capitalize()} Token Usage ---"
                 )
-                logger.info(
-                    f"  Output: {token_usage.get('output_tokens', 'N/A')} tokens"
-                )
-                logger.info(
-                    f"  Total:  {token_usage.get('total_tokens', 'N/A')} tokens"
-                )
+                logger.info(f"  Input:  {token_usage['input_tokens']} tokens")
+                logger.info(f"  Output: {token_usage['output_tokens']} tokens")
+                logger.info(f"  Total:  {token_usage['total_tokens']} tokens")
                 logger.info("-----------------------")
+
+            logger.info(f"--- Generated Report (Preview) ---\n{report_text[:500]}...")
+            return report_text, token_usage
 
         except Exception as e:
             logger.error(f"Error invoking LangChain chain: {e}", exc_info=True)
+            # On failure, create a simple placeholder report.
             report_text = self._create_placeholder_report(
                 artifacts, os.path.basename(run_dir)
             )
-            token_usage = None
-
-        if report_text:
-            logger.info(f"--- Generated Report (Preview) ---\n{report_text[:500]}...")
-
-        return report_text, token_usage
+            return report_text, None
 
     def _postprocess_llm_output(self, report_text: str, run_dir_name: str) -> str:
         """
@@ -700,29 +728,28 @@ class AgnosticReportGenerator:
         logger.info("Post-processing LLM output to ensure correct plot paths...")
 
         # Regex to find Markdown images: ![alt text](path)
-        markdown_image_regex = r"!\\[(.*?)\\]\((.*?)\""
+        markdown_image_regex = r"!\\\[(.*?)\\\]\((.*?)\""
         # Regex to find iframes: <iframe src="path" ...>
         iframe_regex = r'(<iframe\s+src=")(.*?)(".*?></iframe>)'
 
-        def fix_path(match, is_iframe=False):
+        def fix_path(match: re.Match, is_iframe: bool = False) -> str:
+            """Internal helper to replace a path within a regex match."""
             if is_iframe:
                 prefix, malformed_path, suffix = match.groups()
-                filename = os.path.basename(malformed_path)
-                correct_path = f"/{constants.OUTPUT_DIR}/{run_dir_name}/{self.config.directory_structure.graphics_dir}/{filename}"
-                logger.info(
-                    f"  Fixing iframe path: '{malformed_path}' -> '{correct_path}'"
-                )
-                return f"{prefix}{correct_path}{suffix}"
             else:  # Markdown image
-                alt_text, malformed_path = match.groups()
-                filename = os.path.basename(malformed_path)
-                correct_path = f"/{constants.OUTPUT_DIR}/{run_dir_name}/{self.config.directory_structure.graphics_dir}/{filename}"
-                logger.info(
-                    f"  Fixing image path: '{malformed_path}' -> '{correct_path}'"
-                )
+                _, malformed_path = match.groups()
+
+            filename = os.path.basename(malformed_path)
+            correct_path = f"/{constants.OUTPUT_DIR}/{run_dir_name}/{self.config.directory_structure.graphics_dir}/{filename}"
+            logger.info(f"  Fixing path: '{malformed_path}' -> '{correct_path}'")
+
+            if is_iframe:
+                return f"{prefix}{correct_path}{suffix}"  # type: ignore
+            else:
+                alt_text, _ = match.groups()
                 return f"![{alt_text}]({correct_path})"
 
-        # Process both types of paths
+        # Process both types of paths.
         processed_text = re.sub(
             markdown_image_regex, lambda m: fix_path(m, is_iframe=False), report_text
         )
@@ -743,7 +770,8 @@ class AgnosticReportGenerator:
             md_content_with_usage: The full content of the Markdown file.
 
         Returns:
-            The path to the generated HTML file, or None on failure."""
+            The path to the generated HTML file, or None on failure.
+        """
         if not os.path.exists(md_filepath):
             logger.error(f"Markdown file not found at {md_filepath}")
             return None
@@ -770,6 +798,8 @@ class AgnosticReportGenerator:
     def _postprocess_and_get_html_content(self, report_path: str) -> Optional[str]:
         """
         Reads a Markdown file, post-processes paths, and returns a full HTML string.
+
+        This is used by the web server to dynamically render the latest report content.
 
         Args:
             report_path: The path to the Markdown report file.
@@ -807,20 +837,18 @@ class AgnosticReportGenerator:
         Main orchestration method to generate and save a complete analysis report.
 
         This method executes the full report generation pipeline:
-        1.  Finds the appropriate run directory (either the one specified or the latest).
+        1.  Finds the appropriate run directory (either specified or latest).
         2.  Gathers all analysis artifacts from that directory.
         3.  Invokes the LLM to generate the report content in Markdown.
         4.  Saves the raw Markdown report.
         5.  Converts the Markdown to a final, styled HTML report.
 
         Args:
-            target_run_dir (Optional[str]): The absolute path to a specific run
-                directory to process. If None, the latest run directory found in
-                the base output path will be used.
+            target_run_dir: The absolute path to a specific run directory to process.
+                If None, the latest run directory is used.
 
         Returns:
-            Optional[str]: The relative path to the generated HTML report from the
-                           base output directory if successful, otherwise None.
+            The relative path to the generated HTML report, or None on failure.
         """
         run_dir_to_process = target_run_dir or self._find_latest_run_dir()
         if not run_dir_to_process or not os.path.isdir(run_dir_to_process):
@@ -835,7 +863,7 @@ class AgnosticReportGenerator:
         artifacts = self._gather_run_artifacts(run_dir_to_process)
         if not artifacts["data_artifacts"] and not artifacts["plots"]:
             logger.warning(
-                "No data or plot artifacts found in the run directory. Cannot generate a meaningful report."
+                "No data or plot artifacts found. Cannot generate a meaningful report."
             )
             return None
 
@@ -865,11 +893,20 @@ class AgnosticReportGenerator:
 def create_fastapi_app(state: Dict) -> FastAPI:
     """
     Creates and configures the FastAPI application, injecting state.
-    This factory pattern avoids using global variables for state management.
+
+    This factory pattern avoids using global variables for state management,
+    making the server more robust and testable.
+
+    Args:
+        state: A dictionary holding application state (e.g., generator instance).
+
+    Returns:
+        A configured FastAPI application instance.
     """
     app = FastAPI()
 
     # Mount the entire 'output' directory to be served at the '/output' URL path.
+    # This allows the HTML report to access plots and other files.
     if os.path.isdir(constants.OUTPUT_DIR):
         app.mount(
             f"/{constants.OUTPUT_DIR}",
@@ -879,12 +916,13 @@ def create_fastapi_app(state: Dict) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def serve_index_page():
+        """Serves the main HTML report page."""
         generator: Optional[AgnosticReportGenerator] = state.get("generator")
 
         report_filename = state.get("latest_html_report_filename")
         if not report_filename:
             return HTMLResponse(
-                content="<h1>Report Not Found</h1><p>No report has been generated or specified to serve. Please run the script without --serve-only first.",
+                content="<h1>Report Not Found</h1><p>No report has been generated. Please run the script without --serve-only first.</p>",
                 status_code=404,
             )
 
@@ -897,12 +935,13 @@ def create_fastapi_app(state: Dict) -> FastAPI:
 
         md_path = report_path.replace(".html", ".md")
         if generator:
+            # Dynamically render the MD to HTML to ensure paths are always correct.
             full_html_output = generator._postprocess_and_get_html_content(md_path)
-
-            return HTMLResponse(content=full_html_output)
+            if full_html_output:
+                return HTMLResponse(content=full_html_output)
 
         return HTMLResponse(
-            content="<h1>Server Error</h1><p>Report generator not initialized.</p>",
+            content="<h1>Server Error</h1><p>Report generator not initialized or failed to render report.</p>",
             status_code=500,
         )
 
@@ -918,7 +957,7 @@ def create_fastapi_app(state: Dict) -> FastAPI:
 # SCRIPT EXECUTION (The if __name__ == "__main__" block)
 # =============================================================================
 def main():
-    """Parses command-line arguments and orchestrates the report generation and serving."""
+    """Parses command-line arguments and orchestrates report generation and serving."""
     parser = argparse.ArgumentParser(
         description="Generate an LLM-based report from existing analysis results."
     )
@@ -951,20 +990,23 @@ def main():
     args = parser.parse_args()
 
     try:
+        # --- Step 1: Run analysis if requested ---
         if args.run_analysis:
             if args.run_directory:
                 logger.warning(
                     "Both --run-analysis and --run-directory were specified. "
-                    "The analysis will run, and the report will be generated for the NEWEST run, not the one specified."
+                    "The report will be generated for the NEWEST run, not the one specified."
                 )
-            logger.info("--- STEP 1: Running DistETA-AIDI Analysis ---")
+            logger.info("--- Running DistETA-AIDI Batch Analysis ---")
             run_all_analyses()
             logger.info("--- Analysis complete. Proceeding to report generation. ---")
+
+        # --- Step 2: Initialize the report generator ---
         report_config = load_report_config()
         generator = AgnosticReportGenerator(
             config=report_config, base_output_dir=constants.OUTPUT_DIR
         )
-    except (ValueError, ImportError) as e:
+    except (ValueError, ImportError, FileNotFoundError) as e:
         logger.critical(f"Initialization Error: {e}")
         return  # Exit gracefully
 
@@ -974,6 +1016,7 @@ def main():
         "generator": generator,
     }
 
+    # --- Step 3: Generate report or find existing one ---
     if not args.serve_only:
         report_path = generator.generate_report(target_run_dir=args.run_directory)
         app_state["latest_html_report_filename"] = report_path
@@ -1000,18 +1043,19 @@ def main():
         else:
             logger.warning("No run directories found to serve from.")
 
+    # --- Step 4: Start server if applicable ---
     if args.no_serve:
         logger.info("Report generation complete. --no-serve flag is set, so exiting.")
         return
 
     if app_state["latest_html_report_filename"]:
         app = create_fastapi_app(app_state)
-        logger.info(
-            f"FastAPI server starting. Access report at: http://{args.host}:{args.port}/"
-        )
+        server_url = f"http://{args.host}:{args.port}/"
+        logger.info(f"FastAPI server starting. Access report at: {server_url}")
         try:
+            # Open the browser only when a new report is generated.
             if not args.serve_only:
-                webbrowser.open_new_tab(f"http://{args.host}:{args.port}/")
+                webbrowser.open_new_tab(server_url)
         except Exception as e:
             logger.warning(f"Could not open web browser: {e}")
         logger.info("Press CTRL+C to stop.")

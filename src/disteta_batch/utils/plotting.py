@@ -1,6 +1,16 @@
-# This module provides functions for generating all visualizations for the
-# DistETA analysis pipeline using Plotly. It includes functions for plotting
-# initial distributions, silhouette analysis, and final cluster profiles.
+"""
+This module provides functions for generating all visualizations for the DistETA analysis pipeline using Plotly.
+
+It includes high-level functions for creating:
+1.  **Initial Distributions**: Histograms of continuous variables, optionally grouped.
+2.  **K-Means Analysis Plots**: A 3-panel plot including Silhouette analysis, a 2D PCA
+    projection of clusters, and the WCSS Elbow Method plot.
+3.  **Final Cluster Profiles**: A grid of bar plots showing the distribution for
+    each discovered cluster, including High-Density Region (HDR) information.
+
+All plots are designed to be saved as artifacts in the batch analysis output.
+"""
+
 import logging
 from typing import Dict, Iterable, List, Optional, cast
 
@@ -35,7 +45,26 @@ def _generate_plot_title(
     column_name_mapping: Optional[dict] = None,
     hdr_threshold_percentage: Optional[float] = None,
 ) -> str:
-    """Generates a formatted title string for plots based on configuration."""
+    """
+    Generates a formatted, descriptive title for a plot.
+
+    This function dynamically constructs a title string based on the analysis
+    parameters, applying user-friendly mappings for column and value names if provided.
+
+    Args:
+        base_plot_title: The base text for the title (e.g., "Cluster Distributions").
+        df_name_suffix: The internal suffix used for the data segment.
+        group_key: The specific group being plotted (e.g., a specific port name).
+        feature_name: The continuous feature being plotted.
+        n_clusters: The number of clusters (K), if applicable.
+        grouping_column_name: The name of the column used for grouping.
+        value_mapping_config: A dictionary to map grouping values to display names.
+        column_name_mapping: A dictionary to map feature names to display names.
+        hdr_threshold_percentage: The HDR threshold, if used.
+
+    Returns:
+        A formatted title string for the plot.
+    """
     try:
         display_group_name = None
         if group_key is not None and group_key != ALL_DATA_GROUP_KEY:
@@ -84,46 +113,47 @@ def plot_continuous_histograms(
     column_name_mapping: Optional[dict] = None,
     x_axis_label: str = "Value",
     save_non_interactive: bool = False,
-):
-    """Plots histograms of continuous variables, optionally grouped by a column.
+) -> Optional[go.Figure]:
+    """
+    Plots histograms of continuous variables, creating subplots for each group.
 
     Args:
-        df: The DataFrame to plot.
-        continuous_columns: A list of column names to plot.
-        grouping_column_name: The name of the column to group by.
-        value_mapping_config: A dictionary to map values to display names.
+        df: The DataFrame containing the data to plot.
+        continuous_columns: A list of continuous column names to generate histograms for.
+        grouping_column_name: The name of the column to group by for creating subplots.
+        value_mapping_config: A dictionary to map grouping values to display names.
         column_name_mapping: A dictionary to map column names to display names.
         x_axis_label: The label for the x-axis.
-        save_non_interactive: Whether to save the plot as a non-interactive file.
+        save_non_interactive: If True, returns the figure object instead of showing it.
 
     Returns:
-        A Plotly figure object.
+        A Plotly Figure object, or None if no columns are provided.
     """
+    if not continuous_columns:
+        logger.warning("No continuous columns provided for plotting histograms.")
+        return None
+
     if grouping_column_name and grouping_column_name in df.columns:
         try:
             groups = sorted(df[grouping_column_name].dropna().unique().tolist())
             if bool(df[grouping_column_name].isnull().any()):
                 groups.append(np.nan)
-            n_groups, is_grouped = len(groups), True
+            is_grouped = True
         except Exception as e:
             logger.warning(f"Error getting unique groups: {e}. Plotting overall data.")
-            groups, n_groups, is_grouped, grouping_column_name = [None], 1, False, None
+            groups, is_grouped, grouping_column_name = [None], False, None
     else:
-        groups, n_groups, is_grouped, grouping_column_name = [None], 1, False, None
-    if not continuous_columns:
-        logger.warning("No continuous columns provided for plotting histograms.")
-        return
+        groups, is_grouped, grouping_column_name = [None], False, None
+
+    n_groups = len(groups)
     n_cols_per_group = len(continuous_columns)
     fig = make_subplots(
         rows=n_groups,
         cols=n_cols_per_group,
-        subplot_titles=[
-            f"Row {i + 1}, Col {j + 1}"
-            for i in range(n_groups)
-            for j in range(n_cols_per_group)
-        ],
+        subplot_titles=["Analyzing..." for _ in range(n_groups * n_cols_per_group)],
         vertical_spacing=0.2,
     )
+
     colors = px.colors.qualitative.Plotly
     for i, current_group_value in enumerate(groups):
         group_df = df
@@ -187,18 +217,19 @@ def plot_continuous_histograms(
                     )
                     title_line1 = f"Error plotting {display_col_name}"
 
+            # Update subplot title after adding trace
             full_subplot_title = f"{title_line1}<br>{count_str}"
             fig.update_xaxes(title_text=x_axis_label, row=subplot_row, col=subplot_col)
             fig.update_yaxes(title_text="Density", row=subplot_row, col=subplot_col)
-            layout = cast(go.Layout, fig.layout)
-            annotation_index = i * n_cols_per_group + j
-            if annotation_index < len(
-                cast(List[go.layout.Annotation], layout.annotations)
-            ):
-                cast(List[go.layout.Annotation], layout.annotations)[
-                    annotation_index
-                ].text = full_subplot_title
 
+            annotation_index = i * n_cols_per_group + j
+            layout_obj = cast(go.Layout, fig.layout)
+            if layout_obj.annotations and annotation_index < len(
+                layout_obj.annotations  # type: ignore
+            ):
+                layout_obj.annotations[annotation_index].text = full_subplot_title  # type: ignore
+
+    # Update main figure layout
     overall_fig_title = "Distribution of Continuous Variables"
     if grouping_column_name:
         overall_fig_title += f" (Grouped by {grouping_column_name})"
@@ -212,21 +243,30 @@ def plot_continuous_histograms(
         template="plotly_dark",
         margin=dict(t=120, b=50, l=50, r=50),
     )
-    layout = cast(go.Layout, fig.layout)
-    if layout.annotations:
-        for annotation in layout.annotations:
+
+    layout_obj = cast(go.Layout, fig.layout)
+    if layout_obj.annotations:
+        for annotation in layout_obj.annotations:
             if annotation.font:
-                annotation.font.size = 12  # type: ignore
+                annotation.font.size = 12
 
     if not save_non_interactive:
         fig.show()
     return fig
 
 
-def _plot_silhouette(fig, X, cluster_labels, n_clusters, silh_scores):
-    """Helper function to generate the silhouette plot for a given K."""
+def _plot_silhouette(
+    fig: go.Figure,
+    X: pd.DataFrame | np.ndarray,
+    cluster_labels: np.ndarray,
+    n_clusters: int,
+    silh_scores: Dict[int, float],
+):
+    """Inner function to render the silhouette plot onto a subplot figure."""
     n_samples = X.shape[0]
     silhouette_avg = silh_scores.get(n_clusters, np.nan)
+
+    layout_obj = cast(go.Layout, fig.layout)
 
     if pd.notna(silhouette_avg) and 1 < n_clusters < n_samples:
         sample_silhouette_values = silhouette_samples(X, cluster_labels)
@@ -268,8 +308,8 @@ def _plot_silhouette(fig, X, cluster_labels, n_clusters, silh_scores):
             line_width=2,
             line_dash="dash",
             line_color="red",
-            row=1,
-            col=1,
+            row=1,  # type: ignore
+            col=1,  # type: ignore
         )
         fig.update_xaxes(
             title_text="Silhouette Coefficient", range=[-0.1, 1.0], row=1, col=1
@@ -280,15 +320,13 @@ def _plot_silhouette(fig, X, cluster_labels, n_clusters, silh_scores):
             row=1,
             col=1,
         )
-        layout = cast(go.Layout, fig.layout)
-        if (
-            len(cast(List[go.layout.Annotation], layout.annotations)) > 0
-        ):  # Check if annotations exist
-            cast(List[go.layout.Annotation], layout.annotations)[
+
+        # Update the specific subplot title with the average score
+        if layout_obj.annotations and len(layout_obj.annotations) > 0:  # type: ignore
+            layout_obj.annotations[
                 0
-            ].text = f"Silhouette Plot (Avg: {silhouette_avg:.2f})"
+            ].text = f"Silhouette Plot (Avg: {silhouette_avg:.2f})"  # type: ignore
     else:
-        layout = cast(go.Layout, fig.layout)
         fig.add_annotation(
             x=0.5,
             y=0.5,
@@ -299,21 +337,25 @@ def _plot_silhouette(fig, X, cluster_labels, n_clusters, silh_scores):
         )
         fig.update_xaxes(showticklabels=False, row=1, col=1)
         fig.update_yaxes(showticklabels=False, row=1, col=1)
-        if (
-            len(cast(List[go.layout.Annotation], layout.annotations)) > 0
-        ):  # Check if annotations exist
-            cast(List[go.layout.Annotation], layout.annotations)[
+        if layout_obj.annotations and len(layout_obj.annotations) > 0:  # type: ignore
+            layout_obj.annotations[
                 0
-            ].text = f"Silhouette Plot (K={n_clusters} Invalid/NA)"
+            ].text = f"Silhouette Plot (K={n_clusters} Invalid/NA)"  # type: ignore
 
 
-def _plot_scatter_2d(fig, X, cluster_labels, n_clusters):
-    """Helper function to generate the 2D scatter plot of clustered data."""
+def _plot_scatter_2d(
+    fig: go.Figure,
+    X: pd.DataFrame | np.ndarray,
+    cluster_labels: np.ndarray,
+    n_clusters: int,
+):
+    """Inner function to render a 2D PCA projection of clustered data."""
     X_vals = X.values if isinstance(X, pd.DataFrame) else X
     cluster_colors = px.colors.qualitative.Plotly
 
+    layout_obj = cast(go.Layout, fig.layout)
+
     if X_vals.shape[1] >= 2:
-        # Use PCA to get the best 2D representation for high-dimensional data
         pca = PCA(n_components=2, random_state=10)
         X_2d = pca.fit_transform(X_vals)
         fig.add_trace(
@@ -361,32 +403,29 @@ def _plot_scatter_2d(fig, X, cluster_labels, n_clusters):
             logger.warning(f"Could not plot cluster centers for K={n_clusters}: {e}")
         fig.update_xaxes(title_text="Principal Component 1", row=1, col=2)
         fig.update_yaxes(title_text="Principal Component 2", row=1, col=2)
-        layout = cast(go.Layout, fig.layout)
-        if (
-            len(cast(List[go.layout.Annotation], layout.annotations)) > 1
-        ):  # Check if annotations exist
-            cast(List[go.layout.Annotation], layout.annotations)[
-                1
-            ].text = "Clustered Data (PCA Projection)"
+        if layout_obj.annotations and len(layout_obj.annotations) > 1:  # type: ignore
+            layout_obj.annotations[1].text = "Clustered Data (PCA Projection)"  # type: ignore
     else:
-        layout = cast(go.Layout, fig.layout)
         fig.add_annotation(
-            x=0.5, y=0.5, text="Data has < 2 features", showarrow=False, row=1, col=2
+            x=0.5, y=0.5, text="Data has < 2 dims", showarrow=False, row=1, col=2
         )
         fig.update_xaxes(showticklabels=False, row=1, col=2)
         fig.update_yaxes(showticklabels=False, row=1, col=2)
-        if (
-            len(cast(List[go.layout.Annotation], layout.annotations)) > 1
-        ):  # Check if annotations exist
-            cast(List[go.layout.Annotation], layout.annotations)[
-                1
-            ].text = "Clustered Data"
+        if layout_obj.annotations and len(layout_obj.annotations) > 1:  # type: ignore
+            layout_obj.annotations[1].text = "Clustered Data (1D)"  # type: ignore
 
 
-def _plot_elbow(fig, wcss_values, range_n_clusters, n_clusters):
-    """Helper function to generate the WCSS elbow plot."""
+def _plot_elbow(
+    fig: go.Figure,
+    wcss_values: List[float],
+    range_n_clusters: Iterable[int],
+    n_clusters: int,
+):
+    """Inner function to render the WCSS Elbow Method plot."""
     k_list = list(range_n_clusters)
     valid_points = [(k_list[i], w) for i, w in enumerate(wcss_values) if pd.notna(w)]
+
+    layout_obj = cast(go.Layout, fig.layout)
 
     if valid_points:
         valid_k, valid_wcss = zip(*valid_points)
@@ -401,6 +440,7 @@ def _plot_elbow(fig, wcss_values, range_n_clusters, n_clusters):
             row=1,
             col=3,
         )
+
         if n_clusters in valid_k:
             current_wcss = valid_wcss[valid_k.index(n_clusters)]
             fig.add_trace(
@@ -426,30 +466,21 @@ def _plot_elbow(fig, wcss_values, range_n_clusters, n_clusters):
                 row=1,
                 col=3,
             )
+
         fig.update_xaxes(
             title_text="Number of Clusters (K)", tickvals=k_list, row=1, col=3
         )
         fig.update_yaxes(title_text="WCSS", row=1, col=3)
-        layout = cast(go.Layout, fig.layout)
-        if (
-            len(cast(List[go.layout.Annotation], layout.annotations)) > 2
-        ):  # Check if annotations exist
-            cast(List[go.layout.Annotation], layout.annotations)[
-                2
-            ].text = "Elbow Method for KMeans"
+        if layout_obj.annotations and len(layout_obj.annotations) > 2:  # type: ignore
+            layout_obj.annotations[2].text = "Elbow Method for KMeans"  # type: ignore
     else:
-        layout = cast(go.Layout, fig.layout)
         fig.add_annotation(
             x=0.5, y=0.5, text="No WCSS data", showarrow=False, row=1, col=3
         )
         fig.update_xaxes(showticklabels=False, row=1, col=3)
         fig.update_yaxes(showticklabels=False, row=1, col=3)
-        if (
-            len(cast(List[go.layout.Annotation], layout.annotations)) > 2
-        ):  # Check if annotations exist
-            cast(List[go.layout.Annotation], layout.annotations)[
-                2
-            ].text = "Elbow Method (No Valid Data)"
+        if layout_obj.annotations and len(layout_obj.annotations) > 2:  # type: ignore
+            layout_obj.annotations[2].text = "Elbow Method (No Valid Data)"  # type: ignore
 
 
 def plot_silhouette_and_elbow(
@@ -466,8 +497,8 @@ def plot_silhouette_and_elbow(
     grouping_column_name: Optional[str] = None,
     column_name_mapping: Optional[dict] = None,
     save_non_interactive: bool = False,
-):
-    """Creates a 3-panel plot for Silhouette, 2D data projection, and WCSS Elbow method."""
+) -> go.Figure:
+    """Generates a unified 3-panel plot for K-Means clustering analysis."""
     fig = make_subplots(
         rows=1,
         cols=3,
@@ -477,10 +508,13 @@ def plot_silhouette_and_elbow(
             "Elbow Method",
         ),
     )
+
+    # Populate each subplot
     _plot_silhouette(fig, X, cluster_labels, n_clusters, silh_scores)
     _plot_scatter_2d(fig, X, cluster_labels, n_clusters)
     _plot_elbow(fig, wcss_values, range_n_clusters, n_clusters)
 
+    # Generate a comprehensive title for the entire figure
     full_title = _generate_plot_title(
         base_plot_title="KMeans Analysis",
         df_name_suffix=df_name_suffix,
@@ -492,17 +526,18 @@ def plot_silhouette_and_elbow(
         column_name_mapping=column_name_mapping,
     )
 
+    # Final layout adjustments
     fig.update_layout(
         title_text=full_title,
         showlegend=False,
         template="plotly_dark",
         margin=dict(t=80, b=50, l=50, r=50),
     )
-    layout = cast(go.Layout, fig.layout)
-    if layout.annotations:
-        for annotation in layout.annotations:
+    layout_obj = cast(go.Layout, fig.layout)
+    if layout_obj.annotations:
+        for annotation in layout_obj.annotations:
             if annotation.font:
-                annotation.font.size = 12  # type: ignore
+                annotation.font.size = 12
 
     if not save_non_interactive:
         fig.show()
@@ -522,30 +557,31 @@ def plot_cluster_distributions(
     hdr_info_for_plot: Optional[Dict] = None,
     hdr_threshold_percentage: Optional[float] = None,
     save_non_interactive: bool = False,
-):
-    """Generates a grid of bar plots showing the distribution for each final cluster.
+) -> Optional[go.Figure]:
+    """
+    Generates a grid of bar plots showing the distribution for each final cluster.
+
+    Also overlays High-Density Region (HDR) information if provided.
 
     Args:
-        df_cluster_c_sum: A DataFrame with the final aggregated cluster profiles.
-        df_name_suffix: A suffix for the plot title.
+        df_cluster_c_sum: DataFrame with final aggregated cluster profiles.
+        df_name_suffix: A suffix for the plot title, identifying the data segment.
         group_key: The key for the group being plotted.
-        feature_name: The name of the feature being plotted.
-        n_classes: The number of classes in the quantization.
-        value_mapping_config: A dictionary to map values to display names.
-        grouping_column_name: The name of the column to group by.
-        column_name_mapping: A dictionary to map column names to display names.
+        feature_name: The name of the continuous feature being plotted.
+        n_classes: The number of bins used in quantization.
+        value_mapping_config: Dictionary to map group values to display names.
+        grouping_column_name: The name of the column used for grouping.
+        column_name_mapping: Dictionary to map column names to display names.
         x_axis_label: The label for the x-axis.
-        hdr_info_for_plot: A dictionary containing HDR information for the plot.
-        hdr_threshold_percentage: The HDR threshold percentage.
-        save_non_interactive: Whether to save the plot as a non-interactive file.
+        hdr_info_for_plot: Dictionary containing HDR analysis results.
+        hdr_threshold_percentage: The HDR threshold used.
+        save_non_interactive: If True, returns the figure object.
 
     Returns:
-        A Plotly figure object.
+        A Plotly Figure object, or None on error.
     """
     if CLUSTER_COL not in df_cluster_c_sum.columns:
-        logger.error(
-            f"Error: '{CLUSTER_COL}' column missing in df_cluster_c_sum for {df_name_suffix}."
-        )
+        logger.error(f"'{CLUSTER_COL}' column missing in data for {df_name_suffix}.")
         return None
     try:
         id_vars = [CLUSTER_COL]
@@ -554,10 +590,10 @@ def plot_cluster_distributions(
             key=lambda x: int(x.split("_")[1]),
         )
         if not value_vars:
-            logger.error(
-                f"Error: No '{QUANT_PREFIX}*' columns found in df_cluster_c_sum for {df_name_suffix}."
-            )
+            logger.error(f"No '{QUANT_PREFIX}*' columns found for {df_name_suffix}.")
             return None
+
+        # Reshape data for plotting
         melted_df = df_cluster_c_sum.melt(
             id_vars=id_vars,
             value_vars=value_vars,
@@ -571,17 +607,18 @@ def plot_cluster_distributions(
             ),
         ).astype(int)
     except Exception as e:
-        logger.error(f"Error melting or processing DataFrame for {df_name_suffix}: {e}")
+        logger.error(f"Error processing DataFrame for {df_name_suffix}: {e}")
         return None
 
     unique_clusters = sorted(melted_df[CLUSTER_COL].unique())
-    num_clusters = len(unique_clusters)
-    if num_clusters == 0:
+    if not unique_clusters:
         logger.warning(f"No valid clusters found to plot for {df_name_suffix}.")
         return None
 
+    # Create subplot grid
+    num_clusters = len(unique_clusters)
     num_cols = 2 if num_clusters > 1 else 1
-    num_rows = int(np.ceil(num_clusters / num_cols)) if num_clusters > 0 else 0
+    num_rows = int(np.ceil(num_clusters / num_cols))
 
     subplot_titles_with_n = [
         f"Cluster {cid}<br>n = {int(melted_df[melted_df[CLUSTER_COL] == cid]['count'].sum()):,}"
@@ -593,8 +630,8 @@ def plot_cluster_distributions(
         subplot_titles=subplot_titles_with_n,
         vertical_spacing=0.25,
     )
-    cluster_colors = px.colors.qualitative.T10
 
+    cluster_colors = px.colors.qualitative.T10
     for i, cluster_id in enumerate(unique_clusters):
         subplot_row, subplot_col = (i // num_cols) + 1, (i % num_cols) + 1
         cluster_data_for_plot = melted_df[melted_df[CLUSTER_COL] == cluster_id]
@@ -605,15 +642,17 @@ def plot_cluster_distributions(
                 y=cluster_data_for_plot["count"],
                 name=f"Cluster {cluster_id}",
                 marker_color=cluster_colors[i % len(cluster_colors)],
-                marker_line_width=0,
                 showlegend=False,
             ),
             row=subplot_row,
             col=subplot_col,
         )
 
+        # Add HDR annotations if available
         if hdr_info_for_plot and str(cluster_id) in hdr_info_for_plot:
             cluster_hdr_data = hdr_info_for_plot.get(str(cluster_id), {})
+
+            # Draw HDR threshold line
             hdr_line_y = cluster_hdr_data.get("hdr_threshold_count", 0)
             fig.add_shape(
                 type="line",
@@ -628,54 +667,30 @@ def plot_cluster_distributions(
                 col=subplot_col,
             )
 
-            intervals = cluster_hdr_data.get("hdr_intervals", [])
-            for interval_index, interval in enumerate(intervals):
+            # Annotate HDR intervals
+            for interval in cluster_hdr_data.get("hdr_intervals", []):
                 most_probable = interval.get("most_probable_orig_unit")
-                start_edge = interval.get("start_edge_orig_unit")
-                end_edge = interval.get("end_edge_orig_unit")
-                unit_label = interval.get("unit", "")
+                start_edge, end_edge = (
+                    interval.get("start_edge_orig_unit"),
+                    interval.get("end_edge_orig_unit"),
+                )
                 annotation_x_bin = interval.get(
                     "peak_bin_label", interval.get("median_bin_label")
                 )
-
-                max_y_in_interval = 0
-                if annotation_x_bin is not None:
-                    interval_bins_data = cluster_data_for_plot[
-                        (
-                            cluster_data_for_plot[CLASS_COL_NUM]
-                            >= interval.get("start_bin_label")
-                        )
-                        & (
-                            cluster_data_for_plot[CLASS_COL_NUM]
-                            <= interval.get("end_bin_label")
-                        )
-                    ]
-                    if (
-                        interval_bins_data.size > 0
-                    ):  # Check if not empty using .size for type safety
-                        max_y_in_interval = interval_bins_data["count"].max()
-
-                annotation_y, yshift, xanchor = max_y_in_interval, 20, "center"
-                if len(intervals) > 1:
-                    xanchor = "right" if interval_index % 2 == 0 else "left"
-                    if interval_index < 2:
-                        yshift += 15 * (2 - interval_index)
 
                 if all(
                     v is not None
                     for v in [most_probable, start_edge, end_edge, annotation_x_bin]
                 ):
-                    annotation_text = (
-                        f"<b>HDR Mode: {most_probable:.2f} {unit_label}</b><br>"
-                        f"Interval: [{start_edge:.2f} - {end_edge:.2f}]"
-                    )
+                    annotation_text = f"<b>HDR Mode: {most_probable:.2f} {interval.get('unit', '')}</b><br>Interval: [{start_edge:.2f} - {end_edge:.2f}]"
+                    max_y_in_interval = interval.get("peak_count", 0)
+
                     fig.add_annotation(
                         x=annotation_x_bin,
-                        y=annotation_y,
+                        y=max_y_in_interval,
                         text=annotation_text,
                         showarrow=True,
                         arrowhead=4,
-                        arrowwidth=1.5,
                         arrowcolor="#c7c7c7",
                         ax=0,
                         ay=-40,
@@ -686,18 +701,10 @@ def plot_cluster_distributions(
                         borderwidth=1,
                         font=dict(color="white", size=10),
                         align="left",
-                        xanchor=xanchor,
-                        yshift=yshift,
                     )
 
-        if n_classes <= 25:
-            tick_step = 5
-        elif n_classes <= 100:
-            tick_step = 20
-        elif n_classes <= 250:
-            tick_step = 50
-        else:
-            tick_step = 100
+        # Configure axes for each subplot
+        tick_step = 50 if n_classes > 200 else 20 if n_classes > 50 else 5
         tick_vals = list(range(tick_step, n_classes + 1, tick_step))
         fig.update_xaxes(
             title_text=x_axis_label,
@@ -708,6 +715,7 @@ def plot_cluster_distributions(
         )
         fig.update_yaxes(title_text="Summed Count", row=subplot_row, col=subplot_col)
 
+    # Generate main title with HDR info
     base_title = _generate_plot_title(
         base_plot_title="Cluster Distributions",
         df_name_suffix=df_name_suffix,

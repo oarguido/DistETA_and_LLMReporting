@@ -17,7 +17,8 @@ kaleido==0.2.1
 
 # Web server and reporting
 fastapi
-uvicorn[standard] # [standard] includes helpful websocket/protocol libraries
+uvicorn[standard]
+xgboost
 markdown
 Pillow     # For image processing with Gemini
 
