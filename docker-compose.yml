@@ -79,6 +79,17 @@ services:
     profiles:
       - "analyze_report"
 
+  pipeline:
+    <<: *base-service
+    container_name: disteta_pipeline
+    command: >
+      sh -c "python -m src.disteta_streaming.main --run-pipeline"
+    environment:
+      <<: *base-environment
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+    profiles:
+      - pipeline
+
   test:
     build:
       context: .

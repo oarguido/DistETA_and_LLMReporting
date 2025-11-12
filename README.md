@@ -27,11 +27,11 @@ For a detailed explanation of the project's workflow, architecture, and configur
     ```
     GOOGLE_API_KEY="your_api_key_here"
     ```
-3.  **Run the full pipeline (batch analysis and reporting):**
+3.  **Run the full end-to-end pipeline (batch analysis, reporting, and streaming simulation):**
     ```bash
-    docker-compose --profile analyze_report up --build
+    docker-compose --profile pipeline up --build
     ```
-4.  **View the report** at [http://localhost:5001](http://localhost:5001).
+4.  **View the report** at [http://localhost:5001](http://localhost:5001) after the report generation step completes. The streaming simulation will run subsequently in your terminal.
 
 ### Local Installation
 

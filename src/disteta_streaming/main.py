@@ -603,5 +603,75 @@ def simulate_streaming():
         logger.error(f"An unexpected error occurred during streaming simulation: {e}")
 
 
+def main():
+    """
+    Main entry point for the streaming module.
+
+    Parses command-line arguments to either run the full end-to-end pipeline
+    (batch analysis, report generation, and streaming) or just the streaming
+    simulation.
+    """
+    # Configure logging at the very beginning to capture logs from all modules.
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+    parser = argparse.ArgumentParser(
+        description="Run the DistETA streaming simulation or the full pipeline."
+    )
+    parser.add_argument(
+        "--run-pipeline",
+        action="store_true",
+        help="Run the full end-to-end pipeline: batch analysis, report generation, and then streaming.",
+    )
+    args = parser.parse_args()
+
+    if args.run_pipeline:
+        logger.info("--- Starting Full End-to-End Pipeline ---")
+
+        # 1. Run Batch Analysis
+        logger.info("--- Step 1: Running Batch Analysis ---")
+        from ..disteta_batch.main import run_all_analyses
+
+        run_all_analyses()
+        logger.info("--- Batch Analysis Complete ---")
+
+        # 2. Generate Report
+        logger.info("--- Step 2: Generating Analysis Report ---")
+        from ..report_generator.main import AgnosticReportGenerator, load_report_config
+        import webbrowser
+
+        html_report_path = None
+        try:
+            report_config = load_report_config()
+            generator = AgnosticReportGenerator(
+                config=report_config, base_output_dir=constants.OUTPUT_DIR
+            )
+            relative_report_path = generator.generate_report()
+            if relative_report_path:
+                html_report_path = os.path.join(
+                    constants.OUTPUT_DIR, relative_report_path
+                )
+                logger.info("--- Report Generation Complete ---")
+        except Exception as e:
+            logger.error(f"Report generation failed: {e}", exc_info=True)
+
+        # Open the generated report in the browser if it exists.
+        if html_report_path and os.path.exists(html_report_path):
+            absolute_report_path = os.path.realpath(html_report_path)
+            logger.info(f"Opening report in browser: {absolute_report_path}")
+            webbrowser.open(f"file://{absolute_report_path}")
+            time.sleep(2)  # Give the browser a moment to open.
+
+        # 3. Run Streaming Simulation
+        logger.info("--- Step 3: Starting Streaming Simulation ---")
+        simulate_streaming()
+        logger.info("--- Streaming Simulation Complete ---")
+
+    else:
+        # Default behavior: just run the streaming simulation.
+        simulate_streaming()
+
+
 if __name__ == "__main__":
-    simulate_streaming()
+    import argparse
+
+    main()

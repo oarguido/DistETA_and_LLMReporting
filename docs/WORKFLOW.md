@@ -22,6 +22,30 @@ The pipeline is composed of three main components:
 
 ## System Workflow
 
+### End-to-End Pipeline Execution
+
+For convenience, the entire pipeline can be orchestrated with a single command. This is the recommended way to run the project.
+
+```bash
+python -m src.disteta_streaming.main --run-pipeline
+```
+
+This command executes the following steps in sequence:
+1.  **Runs `disteta_batch`**: Performs the full analysis and model training.
+2.  **Runs `report_generator`**: Generates the HTML report from the new artifacts.
+3.  **Runs `disteta_streaming`**: Starts the real-time simulation using the newly trained models.
+
+```mermaid
+graph TD
+    subgraph "Unified Command: --run-pipeline"
+        A[Run src.disteta_streaming.main --run-pipeline] --> B["Step 1: Execute disteta_batch"];
+        B --> C["Step 2: Execute report_generator"];
+        C --> D["Step 3: Execute disteta_streaming"];
+    end
+
+    style A fill:#bde4ff,stroke:#367ab3,stroke-width:3px;
+```
+
 ### High-Level Pipeline
 
 The project operates as a multi-stage pipeline. First, `disteta_batch` runs to analyze data and train models. Then, the `disteta_streaming` and `report_generator` modules can consume these artifacts.
